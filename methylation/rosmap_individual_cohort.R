@@ -1,53 +1,47 @@
 
 # Edits by Brian Lee (leebn@sas)
 # Source code: https://github.com/TransBioInfoLab/ad-meta-analysis
----
-  title: "ROSMAP dataset"
-author: "Lanyu Zhang, Tiago C. Silva, Lissette Gomez, Lily Wang, (Edits: Brian Lee -- leebn@sas)"
-date: "`r Sys.Date()`"
-output:
-  rmarkdown::html_document:
-  theme: lumen
-toc: true
-number_sections: true
-df_print: paged
-code_download: false
-toc_float:
-  collapsed: yes
-toc_depth: 3
-editor_options:
-  chunk_output_type: inline    
----
+# ---
+#   title: "ROSMAP dataset"
+# author: "Lanyu Zhang, Tiago C. Silva, Lissette Gomez, Lily Wang, (Edits: Brian Lee -- leebn@sas)"
+# date: "`r Sys.Date()`"
+# output:
+#   rmarkdown::html_document:
+#   theme: lumen
+# toc: true
+# number_sections: true
+# df_print: paged
+# code_download: false
+# toc_float:
+#   collapsed: yes
+# toc_depth: 3
+# editor_options:
+#   chunk_output_type: inline    
+# ---
   
-  ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE,warning = FALSE)
-```
+# knitr::opts_chunk$set(echo = TRUE,warning = FALSE)
 
 # Data retrival
 
-## TODO: Fix file paths
-
-```{R, message = FALSE, results = 'hide'}
 library(minfi)
 library(dplyr)
 cohort <- "ROSMAP"
-data.dir <- file.path("DATASETS/",cohort,"/") 
-data.dir.table <- "DATASETS/Summary_Table/" 
-data.dir.raw <- file.path(data.dir,"/step1_download/") 
-data.dir.raw.idat <- file.path(data.dir.raw, "AllIdat")
+data.dir <- "~/data/ROSMAPmethNew"
+data.dir.table <- "~/data/ROSMAPmethNew/datatable" 
+data.dir.raw <- file.path(data.dir,"step1_download/") 
+data.dir.raw.idat <- "~/data/ROSMAPmeth/"
 data.dir.raw.metadata <- file.path(data.dir.raw, "Metadata")
-data.dir.read <- file.path(data.dir,"/step2_read_minfi/") 
-data.dir.bsfilter <- file.path(data.dir,"/step3_bsConvFilter/") 
-data.dir.clinical.filter <- file.path(data.dir,"/step4_clinical_available_filtering/") 
-data.dir.probes.qc <- file.path(data.dir,"/step5_probesQC_filtering/") 
-data.dir.probes.normalization <- file.path(data.dir,"/step6_normalization/") 
-data.dir.pca <- file.path(data.dir,"/step7_pca_filtering/") 
-data.dir.neuron <- file.path(data.dir,"/step8_neuron_comp/") 
-data.dir.single.cpg.pval <- file.path(data.dir,"/step9_single_cpg_pval/") 
-data.dir.residuals <- file.path(data.dir,"/step10_residuals/") 
-data.dir.median <- file.path(data.dir,"/step11_median/") 
-for(p in grep("dir",ls(),value = T)) dir.create(get(p),recursive = TRUE,showWarnings = FALSE)
-```
+data.dir.read <- file.path(data.dir,"step2_read_minfi/") 
+data.dir.bsfilter <- file.path(data.dir,"step3_bsConvFilter/") 
+data.dir.clinical.filter <- file.path(data.dir,"step4_clinical_available_filtering/") 
+data.dir.probes.qc <- file.path(data.dir,"step5_probesQC_filtering/") 
+data.dir.probes.normalization <- file.path(data.dir,"step6_normalization/") 
+data.dir.pca <- file.path(data.dir,"step7_pca_filtering/") 
+data.dir.neuron <- file.path(data.dir,"step8_neuron_comp/") 
+data.dir.single.cpg.pval <- file.path(data.dir,"step9_single_cpg_pval/") 
+data.dir.residuals <- file.path(data.dir,"step10_residuals/") 
+data.dir.median <- file.path(data.dir,"step11_median/") 
+for(p in grep("data",ls(),value = T)) dir.create(get(p),recursive = TRUE,showWarnings = FALSE)
 
 ## Download data
 
@@ -56,17 +50,16 @@ for(p in grep("dir",ls(),value = T)) dir.create(get(p),recursive = TRUE,showWarn
 # Required R libraries: synapserutils and synapser can be installed as following:
 #   
 #   ```{R, eval = FALSE}
-install.packages("synapserutils",
-                 repos = c("http://ran.synapse.org", "http://cran.fhcrc.org"))
-install.packages("synapser",
-                 repos = c("http://ran.synapse.org", "http://cran.fhcrc.org"))
+# install.packages("synapserutils",
+#                  repos = c("http://ran.synapse.org", "http://cran.fhcrc.org"))
+# install.packages("synapser",
+#                  repos = c("http://ran.synapse.org", "http://cran.fhcrc.org"))
 # ```
 # 
 # ```{r synapse, eval = FALSE}
-library(synapser)
-library(synapserutils)
+# library(synapser)
+# library(synapserutils)
 # # Please login to synapse using
-synLogin('brian.n.lee', '4Nathaniel')
 # #-----------------------------------------------
 # # Metadata
 # #-----------------------------------------------
@@ -78,9 +71,9 @@ synLogin('brian.n.lee', '4Nathaniel')
 # # DNA methylation
 # #-----------------------------------------------
 # # ROSMAP_arrayMethylation_imputed.tsv.gz
-# syn3168763 <- :syncFromSynapse('syn3168763',
+# syn3168763 <- syncFromSynapse('syn3168763',
 #                                ifcollision = "keep.local",
-#                                path = data.dir.raw)
+#                                path = "/Volumes/ShenLab/adomics/")
 # # ROSMAP_arrayMethylation_metaData.tsv
 # syn3168775 = syncFromSynapse(entity = 'syn3168775',
 #                              ifcollision = "keep.local",
@@ -89,31 +82,30 @@ synLogin('brian.n.lee', '4Nathaniel')
 # syn5850422 = syncFromSynapse(entity = 'syn5850422',
 #                              ifcollision = "keep.local",
 #                              path = data.dir.raw)
-# syn7357283 <- syncFromSynapse(entity = 'syn7357283', 
+# syn7357283 <- syncFromSynapse(entity = 'syn7357283',  ## RAW IDAT FILES
 #                               ifcollision = "keep.local",
 #                               path = data.dir.raw.idat)
 # ```
 
 # Data Pre-processing
 
-Description: 
-  
-- Read in idat files
-- Remove duplicated samples
+# Description: 
+#   
+# - Read in idat files
+# - Remove duplicated samples
+# 
+# Input: 
+#   
+#   - idat files
+# 
+# Output: 
+#   
+#   - RGSet.RDS
+# - phenoData
+# - BetaMatrixRaw
 
-Input: 
-  
-  - idat files
-
-Output: 
-  
-  - RGSet.RDS
-- phenoData
-- BetaMatrixRaw
-
-```{R, eval = FALSE}
 RGSet <- read.metharray.exp(
-  base = file.path(data.dir.raw, "AllIdat"),
+  base = data.dir.raw.idat,
   recursive = TRUE,
   verbose = TRUE
 )
@@ -124,51 +116,41 @@ probes.metadata <- readr::read_tsv(file.path(data.dir.raw, "ROSMAP_arrayMethylat
 phenoData <- readr::read_tsv(file.path(data.dir.raw, "ROSMAP_arrayMethylation_covariates.tsv"))
 phenoData$Sentrix <- paste0(phenoData$Sentrix_ID, "_", phenoData$Sentrix_Position)
 phenoData$Slide <- phenoData$Sentrix_ID
-```
-
-```{R qc_samples_packages, message = FALSE, results = "hide"}
+# ```
+# 
+# ```{R qc_samples_packages, message = FALSE, results = "hide"}
 ##### 5. BMIQ ##################################################################
 library(wateRmelon)
 library(RPMM)
 library(sesame)
 library(sesameData)
-```
-
-
-```{R}
+# ```
+# 
+# 
+# ```{R}
 RGSet <- readRDS(file = paste0(data.dir.read, "RGSet.RDS"))
 bs <- data.frame(bisulfiteConversion = bscon(RGSet))
 bsFilteredOut <- row.names(bs)[bs$bisulfiteConversion < 88]
 nb.samples <- ncol(RGSet)
 RGSet <- RGSet[,!colnames(RGSet) %in% bsFilteredOut]
 nb.samples.bc.filtered <-  ncol(RGSet)
-```
 
-```{R, eval = FALSE}
 save(RGSet,
      nb.samples,
      bs,
      nb.samples.bc.filtered, 
      file = paste0(data.dir.bsfilter, "RGSet_bsfiltered.rda"))
-```
 
-```{R, include = FALSE, eval = TRUE}
 load(file = paste0(data.dir.bsfilter, "RGSet_bsfiltered.rda"))
-```
 
-```{R, include = FALSE, eval = FALSE}
 ggpubr::gghistogram(bs$bisulfiteConversion,xlab = "bisulfite Conversion" )
-```
 
-```{R, include = FALSE, eval = FALSE}
 load(file = paste0(data.dir.bsfilter, "RGSet_bsfiltered.rda"))
 RGSet <- RGSet[,colnames(RGSet) %in% phenoData$Sentrix]
 phenoData <- phenoData[phenoData$Sentrix %in% colnames(RGSet),]
 colnames(RGSet) %in% paste0(phenoData$Sentrix_ID,"_",phenoData$Sentrix_Position) %>% table
 phenoData <- phenoData[match(colnames(RGSet),phenoData$Sentrix),]
-```
 
-```{R, eval = FALSE}
 betaSet <- getBeta(RGSet)
 identical(colnames(betaSet),phenoData$Sentrix) ##TRUE
 colnames(betaSet) <- phenoData$Sample
@@ -176,11 +158,9 @@ save(betaSet,
      RGSet,
      phenoData,
      file =  paste0(data.dir.clinical.filter, "/ROSMAPbetaMatrixraw737ind.rda"))
-```
 
 # Sample subset
 
-```{R, eval = TRUE}
 load(paste0(data.dir.clinical.filter, "/ROSMAPbetaMatrixraw737ind.rda"))
 nb.samples.with.slide <- ncol(betaSet)
 nb.probes <- nrow(betaSet)
@@ -220,23 +200,17 @@ RGSet <- RGSet[,colnames(RGSet) %in% phenoData$Sentrix]
 RGSet <- RGSet[,match(phenoData$Sentrix,colnames(RGSet))]
 identical(colnames(betaSet),phenoData$Sample)
 identical(colnames(RGSet),phenoData$Sentrix)
-```
 
-```{R, eval = FALSE}
 save(betaSet,
      phenoData,
      RGSet,
      file =  paste0(data.dir.clinical.filter, "/ROSMAPbetaMatrixraw734ind.rda"))
-```
 
-```{R before_detectionp, eval = TRUE}
 load(paste0(data.dir.clinical.filter, "/ROSMAPbetaMatrixraw734ind.rda"))
 nb.samples.with.clinical <- ncol(betaSet)
 dim(phenoData)
 dim(betaSet)
-```
 
-```{R, eval = FALSE}
 detP <- detectionP(RGSet, type = "m+u")
 failed.01 <- detP > 0.01
 passedProbes <- rownames(failed.01)[rowMeans(failed.01) == 0]
@@ -248,15 +222,11 @@ nb.probes.detectP <- nrow(betaSet)
 betaSet <- subset (betaSet, substr(row.names(betaSet),1,2) == "cg")
 dim(betaSet)
 nb.probes.detectP.cg <- nrow(betaSet)
-```
 
-```{R, message = FALSE, results = "hide"}
 ##### 2. drop probes that are on X/Y ###########################################
 ##### 3. drop probes where SNP with MAF >= 0.01 in the last 5 bp of the probe ##
 library(DMRcate)
-```
 
-```{R, message = FALSE, warning = FALSE}
 betaSet <- rmSNPandCH(object = betaSet,
                       dist = 5, 
                       mafcut = 0.01, 
@@ -265,9 +235,7 @@ betaSet <- rmSNPandCH(object = betaSet,
                       rmXY = TRUE)
 nb.probes.cg.dmrcate <- nrow(betaSet)
 dim(betaSet)
-```
 
-```{R, eval = FALSE}
 ####### Save File
 save(betaSet,
      nb.probes.detectP.cg,
@@ -275,49 +243,41 @@ save(betaSet,
      nb.probes.cg.dmrcate,
      phenoData,
      file =  paste0(data.dir.probes.qc, "/betas_CG_XY_SNPfiltered.rda"))
-```
 
-
-```{R filter_probes, eval = TRUE}
 load(paste0(data.dir.probes.qc, "/betas_CG_XY_SNPfiltered.rda"))
 dim(phenoData)
 dim(betaSet)
-```
 
 # Normalization
 
-- Quantile normalization and BMIQ normalization
+# - Quantile normalization and BMIQ normalization
 
-Input: 
-  
-  - beta_CG_XY_SNPfiltered_mat.RDS
-- RGSet.RDS
-- pheno_df.RDS
-- full.annot.RDS
+# Input: 
+#   
+#   - beta_CG_XY_SNPfiltered_mat.RDS
+# - RGSet.RDS
+# - pheno_df.RDS
+# - full.annot.RDS
+# 
+# Output: 
+#   
+#   - bs.csv
+# - pheno_df.RDS
+# - QNBMIQ.RDS
 
-Output: 
-  
-  - bs.csv
-- pheno_df.RDS
-- QNBMIQ.RDS
 
-
-```{R qc_samples, message = FALSE, results = "hide"}
 ##### 5. BMIQ ##################################################################
 library(wateRmelon)
 library(RPMM)
 library(sesame)
 library(sesameData)
-```
+
+# ```
 ## Quantile normalization
 
-```{R lumin, eval = FALSE}
 library(lumi)
 betaQN <- lumiN(x.lumi = betaSet, method = "quantile")
-```
 
-
-```{R, eval = FALSE}
 ### Order annotation in the same order as beta matrix
 annotType <- sesameDataGet("HM450.hg19.manifest")
 annotType$designTypeNumeric <- ifelse(annotType$designType == "I",1,2)
@@ -330,9 +290,7 @@ sm.density.compare(
   annotTypeCompleteCol1$designTypeNumeric
 )
 type12 <- annotType$designTypeNumeric[match(rownames(betaQN),names(annotType))]
-```
 
-```{R, eval = FALSE}
 ### BMIQ
 set.seed (946)
 betaQN_BMIQ <- apply(
@@ -344,38 +302,35 @@ betaQN_BMIQ <- apply(
 )
 saveRDS(betaQN_BMIQ, file.path(data.dir.probes.normalization,"ROSMAP_QNBMIQ.rds"))
 saveRDS(phenoData, file.path(data.dir.probes.normalization,"pheno.rds"))
-```
 
-```{R before_pca}
 betaQN_BMIQ <- readRDS( file.path(data.dir.probes.normalization,"ROSMAP_QNBMIQ.rds"))
 dim(betaQN_BMIQ)
 phenoData <- readRDS(file.path(data.dir.probes.normalization,"pheno.rds"))
 dim(phenoData)
-```
 
 # Outliers detection - PCA analysis
 
 
-Description: 
-  
-  1. estimate standard deviation for each probe
-2. select most variable probes (e.g. n = 50,000)
-3. pca analysis
-4. Filter outliers
-
-Input: 
-  
-  - QNBMIQ.rds
-- pheno_df.RDS
-
-Output: 
-  
-  - PCs_usingBetas.csv, 
-- PCA plots
-- QNBMIQ_PCfiltered.RDS
-- pheno_df.RDS
-
-```{R, eval = TRUE}
+# Description: 
+#   
+#   1. estimate standard deviation for each probe
+# 2. select most variable probes (e.g. n = 50,000)
+# 3. pca analysis
+# 4. Filter outliers
+# 
+# Input: 
+#   
+#   - QNBMIQ.rds
+# - pheno_df.RDS
+# 
+# Output: 
+#   
+#   - PCs_usingBetas.csv, 
+# - PCA plots
+# - QNBMIQ_PCfiltered.RDS
+# - pheno_df.RDS
+# 
+# ```{R, eval = TRUE}
 devtools::source_gist("https://gist.github.com/tiagochst/d3a7b1639acf603916c315d23b1efb3e")
 beta_mat <- readRDS( file.path(data.dir.probes.normalization,"ROSMAP_QNBMIQ.rds"))
 dim(beta_mat)
@@ -422,16 +377,16 @@ d$outlier_PC1[d$PC1 < out3sdPC1_1 | d$PC1 > out3sdPC1_2] <- 1
 d$outlier_PC2[d$PC2 >= out3sdPC2_1 & d$PC2 <= out3sdPC2_2] <- 0
 d$outlier_PC2[d$PC2 < out3sdPC2_1 | d$PC2 > out3sdPC2_2] <- 1
 write.csv(d, file.path(data.dir.pca,"ROSMAP_PCs_usingBetas.csv"))
-```
-
-```{R, message = FALSE, results = 'hide'}
+# ```
+# 
+# ```{R, message = FALSE, results = 'hide'}
 ### 2. pca plots
 library(ggplot2)
 library(ggrepel)
 phenoData$sample <- phenoData$Sample
-```
-
-```{R, eval = FALSE, include = FALSE}
+# ```
+# 
+# ```{R, eval = FALSE, include = FALSE}
 # beta values
 byStage <- plotPCA(
   dataset = "ROSMAP: beta values",
@@ -524,10 +479,8 @@ byApoe <- plotPCA(
   center = TRUE,
   scale = TRUE
 )
-```
 
 ## Filter samples by PCA, SAVE files
-```{R, eval = FALSE}
 noOutliers <- d[which(d$outlier_PC1 == 0 & d$outlier_PC2 == 0), ]
 betaQN_BMIQ_PCfiltered <- beta_mat[, rownames(noOutliers)]
 dim(betaQN_BMIQ_PCfiltered)
@@ -535,23 +488,19 @@ saveRDS(betaQN_BMIQ_PCfiltered, file.path(data.dir.pca,"ROSMAP_QNBMIQ_PCfiltered
 phenoData <- phenoData [phenoData$Sample %in% rownames(noOutliers) ,]
 dim(phenoData)
 saveRDS(phenoData, file.path(data.dir.pca,"pheno_PCfiltered.RDS"))
-```
 
 # Summary after QC steps
 
 ## Data and metadata
 
-```{R after_pca}
 betaQN_BMIQ_PCfiltered <- readRDS(file.path(data.dir.pca,"ROSMAP_QNBMIQ_PCfiltered.RDS")) 
 nb.samples.with.clinical.after.pca <- ncol(betaQN_BMIQ_PCfiltered)
 dim(betaQN_BMIQ_PCfiltered)
 phenoData <- readRDS(file.path(data.dir.pca,"pheno_PCfiltered.RDS")) 
 dim(phenoData)
-```
 
 ## Numbers of samples and probes removed in each step
 
-```{R}
 df.samples <- data.frame("Number of samples" =  c(nb.samples, 
                                                   nb.samples.bc.filtered,
                                                   nb.samples.with.slide,
@@ -585,23 +534,19 @@ df.probes <- data.frame("Number of probes" = c(nb.probes,
 )
 df.probes
 save(df.samples,df.probes,file = file.path(data.dir.table, "ROSMAP_table.rda"))
-```
 
 # Compute neuron proportion
 
+# 
+# Data from  https://www.tandfonline.com/doi/full/10.4161/epi.23924
+# 
+# - Input: London_PFC_QNBMIQ_PCfiltered.RDS, pheno107_PFC_df.RDS
+# - Output: pheno107_PFC_withNeuronProp_df.RDS
 
-Data from  https://www.tandfonline.com/doi/full/10.4161/epi.23924
-
-- Input: London_PFC_QNBMIQ_PCfiltered.RDS, pheno107_PFC_df.RDS
-- Output: pheno107_PFC_withNeuronProp_df.RDS
-
-```{R,eval = FALSE}
 objects <- load("../../CET/CETS_Image.RData")
 objects
-```
 
 ## Get reference profile from Caucasions + controls 
-```{R,eval = FALSE}
 idx <- list(
   controlNeuron = pdBrain$celltype == "N" & pdBrain$diag == "Control" & pdBrain$ethnicity == "Caucasian",
   controlGlia   = pdBrain$celltype == "G" & pdBrain$diag == "Control" & pdBrain$ethnicity == "Caucasian"
@@ -626,25 +571,25 @@ pheno_final <- merge(
   by.y = "row.names"
 )
 saveRDS(pheno_final, paste0(data.dir.neuron, "pheno_PFC_withNeuronProp_df.RDS"))
-```
-
-```{R, include = FALSE, eval = FALSE}
+# ```
+# 
+# ```{R, include = FALSE, eval = FALSE}
 pheno_final <- readRDS(paste0(data.dir.neuron, "pheno_PFC_withNeuronProp_df.RDS"))
-```
+# ```
 
 
 # Linear regression by cpgs Methylation 
 
 ## Import datasets
 
-```{R}
+# ```{R}
 beta_mat <- readRDS(file.path(data.dir.pca,"ROSMAP_QNBMIQ_PCfiltered.RDS")) 
 pheno_df <- readRDS(paste0(data.dir.neuron, "pheno_PFC_withNeuronProp_df.RDS")) 
-```
+# ```
 
 ## Test all regions
 
-```{R, eval = TRUE}
+# ```{R, eval = TRUE}
 ### Compute M values
 mval_mat <- log2(beta_mat / (1 - beta_mat))
 pheno_df <- pheno_df[match(colnames(mval_mat),pheno_df$Sample),]
@@ -658,9 +603,9 @@ is(pheno_df$braaksc,"numeric")
 is(pheno_df$age.brain,"numeric")
 is(pheno_df$prop.neuron,"numeric")
 #str(pheno_df)
-```
+# ```
 
-```{R,  eval = FALSE}
+# ```{R,  eval = FALSE}
 predictors_char <- "braaksc"
 covariates_char <- c("age.brain", "sex", "prop.neuron", "slide", "batch")
 doParallel::registerDoParallel(cores = 20)
@@ -688,34 +633,34 @@ write.csv(
   paste0(data.dir.single.cpg.pval, "ROSMAP_PFC_single_cpg_pVal_df.csv"),
   row.names = FALSE
 )
-```
+# ```
 
-```{R}
+# ```{R}
 results_ordered_df <- readr::read_csv(paste0(data.dir.single.cpg.pval, "ROSMAP_PFC_single_cpg_pVal_df.csv"))
 results_ordered_df
-```
+# ```
 
 
 # Linear regression by regions median Methylation 
 
 ## Residuals control and coMethylated Regions
 
-1. Take residuals
-2. Find co-methylated regions
-
-Input: 
-  
-  - QNBMIQ_PCfiltered
-- pheno_withNeuronProp_df
-
-Output: 
-  
-  - QNBMIQ_PCfiltered_mvalResiduals
-- residuals_cometh_ls
+# 1. Take residuals
+# 2. Find co-methylated regions
+# 
+# Input: 
+#   
+#   - QNBMIQ_PCfiltered
+# - pheno_withNeuronProp_df
+# 
+# Output: 
+#   
+#   - QNBMIQ_PCfiltered_mvalResiduals
+# - residuals_cometh_ls
 
 ###  Take residuals
 
-```{R, eval = FALSE}
+# ```{R, eval = FALSE}
 ##### 1. Import datasets #######################################################
 beta_mat <- readRDS(grep("QNBMIQ",dir(data.dir.pca,full.names = T),ignore.case = T,value = T)) 
 pheno_df <- readRDS(dir(data.dir.neuron,full.names = T)) 
@@ -747,11 +692,11 @@ saveRDS(
          "ROSMAP_QNBMIQ_PCfiltered_mvalResiduals.RDS"
   )
 )
-```
+# ```
 
 ### Find co-methylated regions
 
-```{R, eval = FALSE}
+# ```{R, eval = FALSE}
 ### Import datasets
 mvalue_residuals_mat <- readRDS(
   paste0(data.dir.residuals, 
@@ -783,29 +728,29 @@ saveRDS(
   paste0(data.dir.residuals, 
          "ROSMAP_residuals_cometh_input_ls.RDS")
 )
-```
+# ```
 
 
 ## Linear regression by regions median Methylation 
 
-1. Calculate medians by cluster and sample
-2. linear regression
-
-Input: 
-  
-  - QNBMIQ_PCfiltered,
-- pheno_withNeuronProp_df
-- residuals_cometh_input_ls
-
-Output: 
-  
-  - info_df
-- mediansMval_df
-- linear_df
+# 1. Calculate medians by cluster and sample
+# 2. linear regression
+# 
+# Input: 
+#   
+#   - QNBMIQ_PCfiltered,
+# - pheno_withNeuronProp_df
+# - residuals_cometh_input_ls
+# 
+# Output: 
+#   
+#   - info_df
+# - mediansMval_df
+# - linear_df
 
 ### Calculate medians by cluster and sample
 
-```{R, eval = FALSE}
+# ```{R, eval = FALSE}
 ### Import datasets
 beta_mat <- beta_mat <- readRDS(dir(data.dir.pca, pattern = "QNBMIQ", full.names = TRUE))
 pheno_df <- readRDS(dir(data.dir.neuron,full.names = T)) 
@@ -854,11 +799,11 @@ if(!file.exists(filename)){
 } else {
   medianMval.df <- readRDS(filename)
 }
-```
+# ```
 
 ### Test all regions -- linear regressions
 
-```{R, eval = TRUE}
+# ```{R, eval = TRUE}
 ### Import datasets
 info_df <- readRDS(
   paste0(data.dir.median, cohort, "_info_df.rds")
@@ -883,9 +828,9 @@ is(pheno_df$braaksc,"numeric")
 is(pheno_df$age.brain,"numeric")
 is(pheno_df$prop.neuron,"numeric")
 #str(pheno_df)
-```
+# ```
 
-```{R, eval = FALSE}
+# ```{R, eval = FALSE}
 predictors_char <- "braaksc"
 covariates_char <- c("age.brain", "msex", "prop.neuron", "Slide", "batch")
 devtools::source_gist("https://gist.github.com/tiagochst/d3a7b1639acf603916c315d23b1efb3e")
@@ -907,9 +852,9 @@ saveRDS(
   res_withInfo_df,
   paste0(data.dir.median, cohort, "_linear_df.rds")
 )
-```
+# ```
 
-```{R}
+# ```{R}
 file <- dir(data.dir.median,pattern = paste0(".*linear_df"),
             recursive = T,
             full.names = TRUE,
@@ -918,16 +863,16 @@ file
 res_withInfo_df <- readRDS(file)
 dim(res_withInfo_df)
 res_withInfo_df
-```
+# ```
 
 
 # Data final
 
-```{R}
+# ```{R}
 dir(path = data.dir,recursive = T,pattern = ".rda|.csv|.RDS")
-```
+# ```
 
 # Session information
-```{R}
+# ```{R}
 devtools::session_info()
-```
+# ```
