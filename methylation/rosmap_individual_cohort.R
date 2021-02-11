@@ -23,6 +23,8 @@
 
 # Data retrival
 
+## TODO: Fix file paths
+
 library(minfi)
 library(dplyr)
 cohort <- "ROSMAP"
@@ -543,7 +545,7 @@ save(df.samples,df.probes,file = file.path(data.dir.table, "ROSMAP_table.rda"))
 # - Input: London_PFC_QNBMIQ_PCfiltered.RDS, pheno107_PFC_df.RDS
 # - Output: pheno107_PFC_withNeuronProp_df.RDS
 
-objects <- load("../../CET/CETS_Image.RData")
+objects <- load("../../CET/CETS_Image.RData") ## TODO: FIND FILE. 
 objects
 
 ## Get reference profile from Caucasions + controls 
