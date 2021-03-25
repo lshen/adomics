@@ -760,47 +760,120 @@ coMeth_ls <- readRDS(
          "ROSMAP_residuals_cometh_input_ls.RDS"
   )
 )
-### Create info dataset
-input_cometh <- data.frame(
-  inputRegion = coMeth_ls$inputRegion_chr,
-  nCoMethRegion = coMeth_ls$nCoMethRegions_num,
-  coMethRegion = names(coMeth_ls$coMeth_ls),
-  nCpGs = unlist(lapply(coMeth_ls$coMeth_ls, length), use.names = FALSE),
-  stringsAsFactors = FALSE
+library(tidyverse)
+cohort <- "ROSMAP"
+data.dir <- "~/data/ROSMAPmethNew"
+data.dir.table <- "~/data/ROSMAPmethNew/datatable" 
+data.dir.raw <- file.path(data.dir,"step1_download/") 
+data.dir.raw.idat <- "~/data/ROSMAPmeth/"
+data.dir.raw.metadata <- file.path(data.dir.raw, "Metadata")
+data.dir.read <- file.path(data.dir,"step2_read_minfi/") 
+data.dir.bsfilter <- file.path(data.dir,"step3_bsConvFilter/") 
+data.dir.clinical.filter <- file.path(data.dir,"step4_clinical_available_filtering/") 
+data.dir.probes.qc <- file.path(data.dir,"step5_probesQC_filtering/") 
+data.dir.probes.normalization <- file.path(data.dir,"step6_normalization/") 
+data.dir.pca <- file.path(data.dir,"step7_pca_filtering/") 
+data.dir.neuron <- file.path(data.dir,"step8_neuron_comp/") 
+data.dir.single.cpg.pval <- file.path(data.dir,"step9_single_cpg_pval/") 
+data.dir.residuals <- file.path(data.dir,"step10_residuals/") 
+data.dir.median <- file.path(data.dir,"step11_median/") 
+for(p in grep("data",ls(),value = T)) dir.create(get(p),recursive = TRUE,showWarnings = FALSE)
+
+beta_mat <- beta_mat <- readRDS(dir(data.dir.pca, pattern = "QNBMIQ", full.names = TRUE))
+pheno_df <- readRDS(dir(data.dir.neuron,full.names = T)) 
+mval_mat <- log2(beta_mat / (1 - beta_mat)) %>% as.matrix()
+coMeth_ls <- readRDS(
+  paste0(data.dir.residuals, 
+         "ROSMAP_residuals_cometh_input_ls.RDS"
+  )
 )
+
+print("Imported fine")
+### Create info dataset
+
+# print(coMeth_ls)
+
+#joined <- as.data.frame(rbindlist(coMeth_ls))
+
+# input_cometh <- data.frame(
+#   inputRegion = coMeth_ls$inputRegion_chr,
+#   nCoMethRegion = coMeth_ls$nCoMethRegions_num,
+#   coMethRegion = names(coMeth_ls$coMeth_ls),
+#   nCpGs = unlist(lapply(coMeth_ls$coMeth_ls, length), use.names = FALSE),
+#   stringsAsFactors = FALSE
+# )
+input_cometh <- NULL
+
+for (i in 1:31199){
+  temp = coMeth_ls[[i]]
+  row <- data.frame(input_region=(temp$Region), nCoMethRegion=length(temp$Region), coMethRegion=(temp$CpG), nCpGs = length(temp$CpG), stringsAsFactors = F)
+  rbind(input_cometh, row) -> input_cometh
+  print(i)
+}
+
+print("Input cometh made")
+
+#print(input_cometh)
+
 input_cometh_nodup <- input_cometh[
   !duplicated(input_cometh$coMethRegion),
   ]
+#print(input_cometh_nodup)
+
+
 colnames(input_cometh_nodup) <- c(
   paste0(cohort, "_inputRegion"),
   paste0(cohort, "_nCoMethRegion"),
   paste0(cohort, "_coMethRegion"),
   paste0(cohort, "_nCpGs")
 )
+
+print("Formated weird")
 saveRDS(
   input_cometh_nodup,
   paste0(data.dir.median, cohort, "_info_df.rds")
 )
+print("Saved")
 ### Take median of probes in each cluster for each sample
 filename <-  paste0(data.dir.median, cohort, "_mediansMval_df.rds")
 library(robustbase)
-mval_mat <- mval_mat[rownames(mval_mat) %in% unlist(coMeth_ls$coMeth_ls),]
-if(!file.exists(filename)){
-  medianMval.df <- plyr::ldply(
-    coMeth_ls$coMeth_ls[!duplicated(names(coMeth_ls$coMeth_ls))],
-    function(probes){
-      colMedians(mval_mat[as.character(probes),], na.rm = TRUE)
-    },
-    .progress = "time"
-  )
-  medianMval.df$.id <- NULL
-  colnames(medianMval.df) <- colnames(mval_mat)
-  saveRDS(medianMval.df, file = filename)
-} else {
-  medianMval.df <- readRDS(filename)
-}
-# ```
 
+print("Start part 2")
+## This is giving you some trouble. 
+# test <- do.call(rbind, coMeth_ls)
+
+mval_mat <- mval_mat[rownames(mval_mat) %in% unlist(input_cometh$CpG),]
+
+medianMval.df <- NULL
+
+for (i in 1:31199){
+  temp = coMeth_ls[[i]]
+  name = names(coMeth_ls)[[i]]
+  cpgList = c(temp$CpG)
+  row <- as.matrix(data.frame(colMedians(as.matrix(mval_mat[as.character(cpgList),]),na.rm=T)))
+  colnames(row) <- name
+  row <- t(row)
+  rbind(medianMval.df, row) -> medianMval.df
+  print(i)
+}
+
+# if(!file.exists(filename)){
+#   medianMval.df <- plyr::ldply(
+#     coMeth_ls$CpG[!duplicated((coMeth_ls$CpG))],
+#     function(probes){
+#       colMedians(as.matrix(mval_mat[as.character(probes),]),na.rm=T)
+#     },
+#     .progress = "time"
+#   )
+#   medianMval.df$.id <- NULL
+#   colnames(medianMval.df) <- colnames(mval_mat)
+#   saveRDS(medianMval.df, file = filename)
+# } else {
+#   print("File exists")
+#   medianMval.df <- readRDS(filename)
+# }
+# ```
+saveRDS(medianMval.df, file = filename)
 ### Test all regions -- linear regressions
 
 # ```{R, eval = TRUE}
@@ -855,24 +928,11 @@ saveRDS(
 # ```
 
 # ```{R}
-file <- dir(data.dir.median,pattern = paste0(".*linear_df"),
-            recursive = T,
-            full.names = TRUE,
-            ignore.case = T)
-file
-res_withInfo_df <- readRDS(file)
-dim(res_withInfo_df)
-res_withInfo_df
-# ```
-
-
-# Data final
-
-# ```{R}
-dir(path = data.dir,recursive = T,pattern = ".rda|.csv|.RDS")
-# ```
-
-# Session information
-# ```{R}
-devtools::session_info()
-# ```
+#file <- dir(data.dir.median,pattern = paste0(".*linear_df"),
+            # recursive = T,
+            # full.names = TRUE,
+            # ignore.case = T)
+#file
+#res_withInfo_df <- readRDS(file)
+#dim(res_withInfo_df)
+#res_withInfo_df
