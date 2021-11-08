@@ -1,0 +1,727 @@
+---
+title: "MR analysis using ADNI and ROSMAP data"
+output:
+  html_document:
+    toc: true
+    fig_caption: true
+---
+
+Load the data files processed by `ANDI and ROSMAP MR analysis.ipynb`.
+The probes in the MHC region are removed: MHC region in hg19: MHC_chr = 6, MHC_start = 28477797, MHC_end = 33448354.
+
+```{r load_files}
+library(tidyverse)
+xQTL_cis = read_csv("analysis_using_meta_eQTL/xQTLs_expr_metab_prot.csv")
+
+xQTL_cis = xQTL_cis[!is.na(xQTL_cis$pvalue_GWAS), ]
+dim(xQTL_cis)
+
+# verify that the MHC region has already been removed in the preprocessing steps
+# they have been removed because the data is from the eQTL meta analysis from ROS/MAP and CMC
+xQTL_cis = xQTL_cis[(xQTL_cis$chromosome != 6) | (xQTL_cis$snpLocation < 28477797) | (xQTL_cis$snpLocation > 33448354), ]
+dim(xQTL_cis)
+```
+
+
+
+```{r ldlink}
+snpid_groups = split(xQTL_cis$snpid, xQTL_cis$geneSymbol)
+
+# There is only one gene with more than 1000 genes. Due to the constraint of LDlinkR, we only
+# use the SNPs with the top 1000 smallest GWAS beta SEs.
+head(sort(sapply(snpid_groups, length), decreasing=TRUE))
+snpid_groups[["FHIT"]] = xQTL_cis[xQTL_cis$geneSymbol == "FHIT", ]$snpid[
+rank(-abs(xQTL_cis$beta_GWAS / xQTL_cis$statistic_GWAS)[xQTL_cis$geneSymbol == "FHIT"]) <= 1000]
+head(sort(sapply(snpid_groups, length), decreasing=TRUE))
+
+LDmatrix_list = NULL
+library(LDlinkR)
+library(pbapply)
+ldmatrix_file = "analysis_using_meta_eQTL/LDmatrix_expr_metab_prot.rds"
+if (!file.exists(ldmatrix_file)) {
+  Sys.setenv(LDLINK_TOKEN = "ae178767d608")
+  LDmatrix_list = pblapply(snpid_groups, 
+                         function(x) {
+                           if (length(x) == 1) return(NA)
+                           else {
+                             LD = LDmatrix(x, "CEU", "r2",
+                                  token = Sys.getenv("LDLINK_TOKEN"))
+                             if (ncol(LD) == nrow(LD) + 1) LD = LD[, -1]
+                             LD_is_not_NA_SNPs = !is.na(LD[, 1])
+                             LD = LD[LD_is_not_NA_SNPs, LD_is_not_NA_SNPs]
+                             rownames(LD) = colnames(LD)
+                             LD
+                           }
+                          })
+  saveRDS(LDmatrix_list, file=ldmatrix_file)
+} else {
+  LDmatrix_list = readRDS(ldmatrix_file)
+}
+```
+
+
+```{r run_SMR}
+source("~/Downloads/simulation_SMR_multi/SMR_functions.R")  # get_p_values_from_summary()
+genes = unique(xQTL_cis$geneSymbol)
+result_list = pblapply(genes, function (gene) {
+  snps = intersect(xQTL_cis$snpid[xQTL_cis$geneSymbol == gene], colnames(LDmatrix_list[[gene]]))
+  row_indices =  which(xQTL_cis$geneSymbol == gene & xQTL_cis$snpid %in% snps)
+  
+  zx_est = na.omit(t(xQTL_cis[row_indices, c("beta_expr", "beta_prot", "beta_metab")]))
+  zx_se = na.omit(zx_est / t(xQTL_cis[row_indices, c("statistic_expr", "statistic_prot", "statistic_metab")]))
+  zy_est = xQTL_cis[row_indices, "beta_GWAS"][[1]]
+  zy_se = (zy_est / xQTL_cis[row_indices, "statistic_GWAS"])[[1]]
+  
+  get_p_values_from_summary(zx_est, zx_se, zy_est, zy_se, 
+                            r2 = LDmatrix_list[[gene]][snps, snps],
+                            bp = xQTL_cis$snpLocation[row_indices], 
+                            max_r2 = 0.2, min_dist_bp = 1e5,
+                            include_number_of_SNPs = TRUE)
+})
+result_matrix = do.call("rbind", result_list)
+rownames(result_matrix) = genes
+```
+
+
+```{r agora_gene_list}
+# Agora (nominated targets) https://agora.ampadportal.org/genes
+agora_gene_list = read_csv("gene_list/agora_gene_list.csv")
+length(agora_gene_list$hgnc_symbol)
+genes = unique(xQTL_cis$geneSymbol)
+length(agora_gene_list$hgnc_symbol)
+length(genes)
+length(intersect(agora_gene_list$hgnc_symbol, genes))
+result_matrix_in_agora = result_matrix[intersect(agora_gene_list$hgnc_symbol, genes), ]
+result_matrix_in_agora
+```
+
+```{r mr_plot_agora, eval=FALSE, include=FALSE}
+library(MendelianRandomization)
+# example_gene_name = names(which.max(sapply(split(xQTL_cis_filtered$snps, xQTL_cis_filtered$Symbol), length)))
+example_gene_name = "ABCA7"
+
+xQTL_example_gene = xQTL_cis[xQTL_cis$geneSymbol == example_gene_name, ]
+mr_plot(mr_input(bx = xQTL_example_gene$beta_expr, bxse = xQTL_example_gene$beta_expr / xQTL_example_gene$statistic_expr,
+                 by = xQTL_example_gene$beta_GWAS, byse = xQTL_example_gene$beta_GWAS / xQTL_example_gene$statistic_GWAS))
+mr_plot(mr_input(bx = xQTL_example_gene$beta_prot, bxse = xQTL_example_gene$beta_prot / xQTL_example_gene$statistic_prot,
+                 by = xQTL_example_gene$beta_GWAS, byse = xQTL_example_gene$beta_GWAS / xQTL_example_gene$statistic_GWAS))
+mr_plot(mr_input(bx = xQTL_example_gene$beta_metab, bxse = xQTL_example_gene$beta_metab / xQTL_example_gene$statistic_metab,
+                 by = xQTL_example_gene$beta_GWAS, byse = xQTL_example_gene$beta_GWAS / xQTL_example_gene$statistic_GWAS))
+```
+
+
+```{r manhattan_agora}
+# chromosome length -- See https://msmith.de/2019/06/05/chrom-lengths-in-bioc.html
+library(GenomicFeatures)
+chrom_length_file = "cis/chrom_length_grch37_ensembl.csv"
+if (!file.exists(chrom_length_file)) {
+  chrom_length = getChromInfoFromBiomart(biomart="ENSEMBL_MART_ENSEMBL",
+                        host="grch37.ensembl.org",
+                        dataset="hsapiens_gene_ensembl") %>%
+    dplyr::arrange(chrom)
+  write.csv(chrom_length, file = chrom_length_file)
+} else {
+  chrom_length = read.csv(file = chrom_length_file)
+}
+
+genes = colnames(result_matrix_in_agora)
+
+# Cauchy
+# See https://www.r-graph-gallery.com/101_Manhattan_plot.html
+library(qqman)
+results_with_coords = merge(xQTL_cis, result_matrix_in_agora, by.x = "geneSymbol", by.y = 0, all.x = FALSE, all.y = TRUE)
+results_with_coords = results_with_coords[!duplicated(results_with_coords$geneSymbol), ]
+results_with_coords = merge(results_with_coords, chrom_length, by.x = "chromosome", by.y = "chrom", all.x = TRUE, all.y = FALSE)
+results_with_coords = results_with_coords[!duplicated(results_with_coords$geneSymbol), ]
+
+results_with_coords$chr = results_with_coords$chromosome
+results_with_coords$BP = results_with_coords$snpLocation
+
+# not combined
+results_with_coords$SMR_expression = results_with_coords$WGLR_OneModality1
+results_with_coords$SMR_protein = results_with_coords$WGLR_OneModality2
+results_with_coords$SMR_metabolite = results_with_coords$WGLR_OneModality3
+results_with_coords_long = pivot_longer(results_with_coords, cols=c("SMR_expression", "SMR_protein", "SMR_metabolite"), names_to = "modality", values_to = "pval_SMR")
+
+results_with_coords_for_plot = results_with_coords
+results_with_coords_long_for_plot = results_with_coords_long
+
+for (chr in 1:22) {
+  # set -log10(p) to -1 to hide the boundaries:
+  results_with_coords_for_plot = results_with_coords_for_plot %>% add_row(chr = chr, BP = 1, WGLR_Cauchy_cauchy = 10)
+  results_with_coords_for_plot = results_with_coords_for_plot %>% add_row(chr = chr, BP = chrom_length$length[chrom_length$chrom == chr], WGLR_Cauchy_cauchy = 10)
+    results_with_coords_long_for_plot = results_with_coords_long_for_plot %>% add_row(chr = chr, BP = 1, WGLR_Cauchy_cauchy = 10)
+  results_with_coords_long_for_plot = results_with_coords_long_for_plot %>% add_row(chr = chr, BP = chrom_length$length[chrom_length$chrom == chr], WGLR_Cauchy_cauchy = 10)
+}
+
+# TODO: technically the coords are from SNPs -- need to change to genes if we really want to be precise (at most 1 M bp apart)
+# manhattan(results_with_coords_for_plot, chr="chr", bp="BP", snp="Symbol", p="pval_SMR_topSNP_Cauchy_cauchy",
+#           annotatePval = 0.1,
+#           main = "SMR P-values after Cauchy combination",
+#           suggestiveline = -log10(0.05 / nrow(results)) - 2,
+#           genomewideline = -log10(0.05 / nrow(results)),
+#           ylim = c(0, 4))
+
+# using ggplot2 instead; see  https://www.r-graph-gallery.com/101_Manhattan_plot.html
+results_with_coords_for_ggplot = results_with_coords
+for (chr in 1:22) {
+  # set -log10(p) to -1 to hide the boundaries:
+  results_with_coords_for_ggplot = results_with_coords_for_ggplot %>% add_row(chr = chr, BP = 0, WGLR_Cauchy_cauchy = NA)
+}
+don = chrom_length %>% as_tibble() %>%
+  # Compute chromosome size
+  filter(chrom %in% 1:22) %>%
+  dplyr::mutate(chr = as.numeric(chrom)) %>%
+  arrange(chr) %>%
+  # Calculate cumulative position of each chromosome
+  mutate(tot=cumsum(as.numeric(length))-length) %>%
+  dplyr::select(chr, tot) %>%
+  # Add this info to the initial dataset
+  left_join(results_with_coords_for_ggplot, ., by=c("chr"="chr")) %>%
+  # Add a cumulative position of each SNP
+  arrange(chr, BP) %>%
+  mutate(BPcum=BP+tot)
+
+axisdf = don %>% group_by(chr) %>% summarize(center=( max(BPcum) + min(BPcum) ) / 2 )
+ggplot(don, aes(x=BPcum, y=-log10(WGLR_Cauchy_cauchy))) +
+    # Show all points (color according to chr)
+    #geom_point( aes(color=as.factor(chr)), alpha=0.8, size=1.3) +
+    #scale_color_manual(values = rep(c("grey", "skyblue"), 22 )) +
+    # Show all points (color according to omic modality)
+    geom_point(alpha=0.8, size=1.3) +
+    geom_hline(yintercept=-log10(0.05/length(genes))) +
+    # custom X axis:
+    scale_x_continuous( label = axisdf$chr, breaks= axisdf$center ) +
+    #scale_y_continuous(expand = c(0, 0), limits = c(0, 4)) +     # remove space between plot area and x axis
+    # Custom the theme:
+    theme_bw() +
+    theme( 
+      legend.position="none",
+      panel.border = element_blank(),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank()
+    )
+
+# TODO: technically the coords are from SNPs -- need to change to genes
+# TODO: change the color of point to reflect methylation, expression, metabolomics, etc.
+# manhattan(results_with_coords_long_for_plot, chr="chr", bp="BP", snp="Symbol", p="pval_SMR",
+#           annotatePval = 0.1,
+#           main = "SMR P-values before combination",
+#           suggestiveline = -log10(0.05 / nrow(results) / 3) - 2,
+#           genomewideline = -log10(0.05 / nrow(results) / 3),
+#           ylim = c(0, 4))
+
+
+
+# using ggplot2 instead; see  https://www.r-graph-gallery.com/101_Manhattan_plot.html
+results_with_coords_long_for_ggplot = results_with_coords_long
+for (chr in 1:22) {
+  # set -log10(p) to -1 to hide the boundaries:
+  results_with_coords_long_for_ggplot = results_with_coords_long_for_ggplot %>% add_row(chr = chr, BP = 0, pval_SMR = NA)
+}
+library(scico)
+don = chrom_length %>% as_tibble() %>%
+  # Compute chromosome size
+  filter(chrom %in% 1:22) %>%
+  dplyr::mutate(chr = as.numeric(chrom)) %>%
+  arrange(chr) %>%
+  # Calculate cumulative position of each chromosome
+  mutate(tot=cumsum(as.numeric(length))-length) %>%
+  dplyr::select(chr, tot) %>%
+  # Add this info to the initial dataset
+  left_join(results_with_coords_long_for_ggplot, ., by=c("chr"="chr")) %>%
+  # Add a cumulative position of each SNP
+  arrange(chr, BP) %>%
+  mutate(BPcum=BP+tot)
+
+axisdf = don %>% group_by(chr) %>% summarize(center=( max(BPcum) + min(BPcum) ) / 2 )
+ggplot(don, aes(x=BPcum, y=-log10(pval_SMR))) +
+    # Show all points (color according to chr)
+    #geom_point( aes(color=as.factor(chr)), alpha=0.8, size=1.3) +
+    #scale_color_manual(values = rep(c("grey", "skyblue"), 22 )) +
+    # Show all points (color according to omic modality)
+    geom_point( aes(color=modality), alpha=0.8, size=1.3) +
+    scale_color_scico_d(na.translate=FALSE) +
+    geom_hline(yintercept=-log10(0.05/length(genes)/3)) +
+    # custom X axis:
+    scale_x_continuous( label = axisdf$chr, breaks= axisdf$center ) +
+    #scale_y_continuous(expand = c(0, 0), limits = c(0, 4)) +     # remove space between plot area and x axis
+    # Custom the theme:
+    theme_bw() +
+    theme(
+      #legend.position="none",
+      panel.border = element_blank(),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank()
+    )
+
+
+# show top combined p-values
+results_with_coords %>% as_tibble() %>%
+  arrange(WGLR_Cauchy_cauchy) %>%
+  dplyr::select(geneSymbol, WGLR_Cauchy_cauchy)
+
+#  show p-values before combination
+results_with_coords_long %>% as_tibble() %>%
+  arrange(pval_SMR) %>%
+  dplyr::select(geneSymbol, pval_SMR, modality) %>%
+  mutate(pval_SMR_adjusted_for_3_modalties = pval_SMR * 3)
+```
+
+
+
+
+We need to calculate `zx_est`, `zx_se`, `zy_est`, and `zy_se` for each modality.
+
+```{r parse_files, eval=FALSE, include=FALSE}
+modalities = c("m", "e", "p", "metab")
+colnames(xQTL_cis) =
+ c("p_zx_est",               "pvalue_prot",               "Symbol",                "chr",               
+#c("beta_prot",               "pvalue_prot",               "geneSymbol",                "chromosome",               
+ "BP",               "snps",                     "snpLocId",                  "ensembl_gene",                     
+#"snpLocation",               "snpid",                     "snpLocId",                  "gene",                     
+ "e_zx_stat",            "pvalue_expr",               "e_zx_est",                 "A1",                       
+#"statistic_expr",            "pvalue_expr",               "beta_expr",                 "A1",                       
+ "A2",                        "A2freq",                    "expressionIncreasingAllele","strand",                   
+#"A2",                        "A2freq",                    "expressionIncreasingAllele","strand",                   
+ "geneBiotype",               "geneStartPosition",         "geneEndPosition",           "p_zx_stat",           
+#"geneBiotype",               "geneStartPosition",         "geneEndPosition",           "statistic_prot",           
+ "zy_stat",            "pvalue_GWAS",               "zy_est",                 "metab_zx_stat",          
+#"statistic_GWAS",            "pvalue_GWAS",               "beta_GWAS",                 "statistic_metab",          
+ "pvalue_metab",              "metab_zx_est" )
+#"pvalue_metab",              "beta_metab" )]
+#colnames(xQTL_cis) = c('snps', 'Symbol', 'chr', 'BP', 'type', 'zy_est', 'zy_se')
+# xQTL_cis$zy_stat = xQTL_cis$zy_est / xQTL_cis$zy_se
+# xQTL_cis$m_zx_est = mQTL$beta
+xQTL_cis$zy_se = xQTL_cis$zy_est / xQTL_cis$zy_stat
+
+# xQTL_cis$m_zx_se = xQTL_cis$m_zx_se / xQTL_cis$m_zx_se
+# xQTL_cis$m_zx_stat = mQTL$statistic_x
+# xQTL_cis$e_zx_est = eQTL$beta
+xQTL_cis$e_zx_se = xQTL_cis$e_zx_est / xQTL_cis$e_zx_stat
+# xQTL_cis$e_zx_stat = eQTL$statistic_x
+# xQTL_cis$p_zx_est = pQTL$beta
+xQTL_cis$p_zx_se = xQTL_cis$p_zx_est / xQTL_cis$p_zx_stat
+# xQTL_cis$p_zx_stat = pQTL$statistic_x
+# xQTL_cis$metab_zx_est = metabQTL$beta
+xQTL_cis$metab_zx_se = xQTL_cis$metab_zx_est / xQTL_cis$metab_zx_stat
+# xQTL_cis$metab_zx_stat = metabQTL$statistic
+```
+
+Perform LD clumping so that the minimum distance between SNPs is 100 kb.
+
+```{r LD_clumping_obsolete, eval=FALSE, include=FALSE}
+min_dist = 100000
+max_R2 = 0.2
+SNP_state = rep(NA, nrow(xQTL_cis)) # clumped or selected
+genes = unique(xQTL_cis$Symbol)
+for (gene in genes) {
+  NA_SNPs = which(is.na(SNP_state[xQTL_cis$Symbol == gene])) + which(xQTL_cis$Symbol == gene)[1] - 1
+  while (length(NA_SNPs) > 0) {
+    # relative_index_of_selected_SNP = arrayInd(which.max(
+    #     abs(as.matrix(xQTL_cis[NA_SNPs, c('m_zx_stat','e_zx_stat','p_zx_stat','metab_zx_stat')]))),
+    #     .dim=c(length(NA_SNPs),4))[1,1]
+    
+    # select the probe with min GWAS p-value
+    relative_index_of_selected_SNP = which.min(xQTL_cis[NA_SNPs, ]$pvalue_GWAS)[1]
+    SNP_state[NA_SNPs[relative_index_of_selected_SNP]] = "selected"
+    
+    # 2nd round: label SNPs that need to be excluded
+    for (selected_SNP in which(SNP_state[xQTL_cis$Symbol == gene] == "selected") + which(xQTL_cis$Symbol == gene)[1] - 1) {
+      for (NA_SNP in which(is.na(SNP_state[xQTL_cis$Symbol == gene])) + which(xQTL_cis$Symbol == gene)[1] - 1) {
+        if (abs(xQTL_cis$BP[selected_SNP] - xQTL_cis$BP[NA_SNP]) < min_dist || 
+            LD[xQTL_cis$snps[selected_SNP], xQTL_cis$snps[NA_SNP]] > max_R2)
+          SNP_state[NA_SNP] = "clumped"
+      }
+    }
+    NA_SNPs = which(is.na(SNP_state[xQTL_cis$Symbol == gene])) + which(xQTL_cis$Symbol == gene)[1] - 1
+  }
+}
+xQTL_cis_filtered = xQTL_cis[SNP_state=="selected",]
+dim(xQTL_cis_filtered)
+head(xQTL_cis_filtered)
+```
+
+```{r LD_clumping_lazy, eval=FALSE, include=FALSE}
+xQTL_cis_filtered = xQTL_cis %>% group_by(Symbol) %>% slice_min(order_by = pvalue_GWAS)
+```
+
+```{r LD_clumping, eval=FALSE, include=FALSE}
+min_dist = 100000
+max_R2 = 0.2
+genes = unique(xQTL_cis$Symbol)
+xQTL_by_gene_list = NULL
+LD_list = NULL
+for (gene in genes) {
+  xQTL_per_gene = xQTL_cis[xQTL_cis$Symbol == gene, ]
+  if (nrow(xQTL_per_gene) > 1) {
+    LD = LDmatrix_list[[gene]]
+    if (ncol(LD) == nrow(LD) + 1) LD = LD[, -1]
+    LD_is_not_NA_SNPs = !is.na(LD[, 1])
+    LD = LD[LD_is_not_NA_SNPs, LD_is_not_NA_SNPs]
+    rownames(LD) = colnames(LD)
+    xQTL_per_gene = xQTL_per_gene[xQTL_per_gene$snps %in% colnames(LD), ]
+    
+    is_SNP_selected = rep(NA, nrow(xQTL_per_gene)) # is a SNP selected?
+
+    NA_SNPs = which(is.na(is_SNP_selected))  # undecided SNPs
+    while (length(NA_SNPs) > 0) {
+      # relative_index_of_selected_SNP = arrayInd(which.max(
+      #     abs(as.matrix(xQTL_cis[NA_SNPs, c('m_zx_stat','e_zx_stat','p_zx_stat','metab_zx_stat')]))),
+      #     .dim=c(length(NA_SNPs),4))[1,1]
+      
+      # select the probe with min GWAS p-value
+      selected_SNP_ind = which.min(xQTL_cis[NA_SNPs, ]$pvalue_GWAS)[1]
+      selected_SNP = NA_SNPs[selected_SNP_ind]
+      is_SNP_selected[selected_SNP] = TRUE
+      
+      # 2nd round: label SNPs that need to be excluded
+  
+      NA_SNPs = NA_SNPs[NA_SNPs != selected_SNP]
+      for (NA_SNP in which(is.na(is_SNP_selected))) {
+        if ((abs(xQTL_per_gene$BP[selected_SNP] - xQTL_per_gene$BP[NA_SNP]) < min_dist) || 
+            (LD[xQTL_per_gene$snps[selected_SNP], xQTL_per_gene$snps[NA_SNP]] > max_R2))
+          is_SNP_selected[NA_SNP] = FALSE
+      }
+      NA_SNPs = which(is.na(is_SNP_selected))  # undecided SNPs
+    }
+    xQTL_per_gene = xQTL_per_gene[is_SNP_selected, ]
+  }
+  xQTL_by_gene_list[[gene]] = xQTL_per_gene
+  LD_list[[gene]] = LD[is_SNP_selected, is_SNP_selected]
+}
+xQTL_cis_filtered = do.call("rbind", xQTL_by_gene_list)
+print(xQTL_cis_filtered)
+```
+
+
+```{r mr_plot, eval=FALSE, include=FALSE}
+library(MendelianRandomization)
+example_gene_name = names(which.max(sapply(split(xQTL_cis_filtered$snps, xQTL_cis_filtered$Symbol), length)))
+
+xQTL_example_gene = xQTL_cis_filtered[xQTL_cis_filtered$Symbol == example_gene_name, ]
+mr_plot(mr_input(bx = xQTL_example_gene$e_zx_est, bxse = xQTL_example_gene$e_zx_se,
+                 by = xQTL_example_gene$zy_est, byse = xQTL_example_gene$zy_se),
+        line="egger", orientate = TRUE, interactive = TRUE)
+mr_ivw(mr_input(bx = xQTL_example_gene$p_zx_est, bxse = xQTL_example_gene$p_zx_se,
+                by = xQTL_example_gene$zy_est, byse = xQTL_example_gene$zy_se))
+```
+
+For each gene, we calculate the MR p-values using a list of methods.
+
+```{r MR_analysis, include=FALSE, eval=FALSE}
+range_of_snps = data.frame(genes=genes, range=NA)
+for (gene in genes) {
+  range_of_snps$range[range_of_snps$genes == gene] = diff(range(xQTL_cis_filtered$BP[xQTL_cis_filtered$Symbol == gene]))
+}
+max(range_of_snps$range)
+```
+
+```{r MR_analysis_summary_one_SNP, include=FALSE, eval=FALSE}
+source("~/Downloads/simulation_SMR_multi/SMR_functions_p1.R")  # get_p_values_from_summary()
+
+methods =  c("second_order_Fisher_chisq", "second_order_Fisher_chisq_corr", "second_order_Cauchy_cauchy", "second_order_Harmonic", "second_order_MinP",
+                 "first_order_Fisher_chisq", "first_order_Fisher_chisq_corr", "first_order_Cauchy_cauchy", "first_order_Harmonic", "first_order_MinP")
+
+genes = unique(xQTL_cis_filtered$Symbol)
+
+columns = c("pval_eQTL", "pval_pQTL", "pval_metabQTL", "pval_SMR_topSNP_Cauchy_cauchy")#,
+            #methods)
+
+results = matrix(nrow = length(genes), ncol = length(columns))
+rownames(results) = genes
+colnames(results) = columns
+
+# Here we implemented SMR in Zhu et al. (2016) by picking the strongest IVs for each modality.
+for (i in seq_along(genes)) {
+  gene = genes[i]
+  xQTL_cis_i = xQTL_cis_filtered[xQTL_cis_filtered$Symbol == gene,]
+
+  # mtop = xQTL_cis_i[which.max(abs(xQTL_cis_i$m_zx_stat)), ]
+  etop = xQTL_cis_i[which.max(abs(xQTL_cis_i$e_zx_stat)), ]
+  ptop = xQTL_cis_i[which.max(abs(xQTL_cis_i$p_zx_stat)), ]
+  metabtop = xQTL_cis_i[which.max(abs(xQTL_cis_i$metab_zx_stat)), ]
+
+  # pval_m = pchisq((mtop$m_zx_stat)^2 * (mtop$zy_stat)^2 /
+  #                  ((mtop$m_zx_stat)^2 + (mtop$zy_stat)^2),
+  #                1, lower.tail = FALSE)
+  pval_e = pchisq((etop$e_zx_stat)^2 * (etop$zy_stat)^2 /
+                   ((etop$e_zx_stat)^2 + (etop$zy_stat)^2),
+                 1, lower.tail = FALSE)
+  pval_p = pchisq((ptop$p_zx_stat)^2 * (ptop$zy_stat)^2 /
+                   ((ptop$p_zx_stat)^2 + (ptop$zy_stat)^2),
+                 1, lower.tail = FALSE)
+  pval_metab = pchisq((metabtop$metab_zx_stat)^2 * (metabtop$zy_stat)^2 /
+                   ((metabtop$metab_zx_stat)^2 + (metabtop$zy_stat)^2),
+                 1, lower.tail = FALSE)
+  SMR_statistics = c(#pval_m, 
+                     pval_e, pval_p, pval_metab)
+  stat_SMR_Cauchy = 1/length(SMR_statistics) * sum(tan((0.5 - SMR_statistics) * pi))
+  p_SMR_topSNP_Cauchy_cauchy = 0.5 - atan(stat_SMR_Cauchy)/pi
+  
+  # if (length(pval_m) == 0) pval_m = NA
+  
+  #if (length(pval_e) == 0) pval_e = NA
+  #if (length(pval_p) == 0) pval_p = NA
+  #if (length(pval_metab) == 0) pval_metab = NA
+  
+  SNPs = xQTL_cis_filtered$snps[xQTL_cis_filtered$Symbol == gene]
+  row_indices = which(xQTL_cis_filtered$Symbol == gene)
+  zx_est = na.omit(t(xQTL_cis_filtered[row_indices, c( "e_zx_est", "p_zx_est", "metab_zx_est")]))
+  zx_se = na.omit(t(xQTL_cis_filtered[row_indices, c("e_zx_se", "p_zx_se", "metab_zx_se")]))
+  # zx_est = na.omit(t(xQTL_cis_filtered[row_indices, c("m_zx_est", "e_zx_est", "p_zx_est", "metab_zx_est")]))
+  # zx_se = na.omit(t(xQTL_cis_filtered[row_indices, c("m_zx_se", "e_zx_se", "p_zx_se", "metab_zx_se")]))
+  zy_est = xQTL_cis_filtered[row_indices, "zy_est"]
+  zy_se = xQTL_cis_filtered[row_indices, "zy_se"]
+  
+  results[i, ] = c(pval_e, pval_p, pval_metab, p_SMR_topSNP_Cauchy_cauchy)
+                   #get_p_values_from_summary(abs(zx_est), zx_se, abs(zy_est[[1]]), zy_se[[1]], r2 = 0))
+  # r2 = LD[SNPs, SNPs, drop=FALSE]
+  # results[i, ] = c(pval_m, pval_e, pval_p, pval_metab, p_SMR_topSNP_Cauchy_cauchy,
+                   # get_p_values_from_summary(abs(zx_est), zx_se, abs(zy_est[[1]]), zy_se[[1]], r2 = r2))
+}
+```
+
+```{r MR_analysis_summary, eval=FALSE, include=FALSE}
+source("~/Downloads/simulation_SMR_multi/SMR_functions.R")  # get_p_values_from_summary()
+genes = unique(xQTL_cis_filtered$Symbol)
+result_list = lapply(genes, function (gene) {
+  row_indices = which(xQTL_cis_filtered$Symbol == gene)
+  
+  zx_est = na.omit(t(xQTL_cis_filtered[row_indices, c( "e_zx_est", "p_zx_est", "metab_zx_est")]))
+  zx_se = na.omit(t(xQTL_cis_filtered[row_indices, c("e_zx_se", "p_zx_se", "metab_zx_se")]))
+  zy_est = xQTL_cis_filtered[row_indices, "zy_est"]
+  zy_se = xQTL_cis_filtered[row_indices, "zy_se"]
+  
+  get_p_values_from_summary(zx_est, zx_se, zy_est[[1]], zy_se[[1]], r2 = as.matrix(LD_list[[gene]]))
+})
+results = do.call("rbind", result_list)
+rownames(results) = genes
+min(results[,"SMR_singleSNP_Cauchy_cauchy"])
+genes[which.min(results[,"SMR_singleSNP_Cauchy_cauchy"])]
+min(results[,"WGLR_Cauchy_cauchy"], na.rm=TRUE)
+genes[which.min(results[,"WGLR_Cauchy_cauchy"])]
+```
+
+After LD clumping, there is usually only one SNP associated with each gene. This will render the multivariable approach and the methods that usually require multiple SNPs (IVW, WGLR, and GSMR) not practical in most circumstances.
+
+Now we explain our argument for the integrative analysis using multiple modalities. 
+ The approaches we need to compare in the real data analysis are non-integrative approaches and integrative approaches. Due to the fact that MinP not being able to control type I error when using summary data, and correlation between estimates for each modality not readily available for Fisher combination method with correction, the integrative approach would mainly refer to Cauchy combination method.
+
+For example, in gene DNMT3A, the methylQTL p-value is 0.0238 and the metabQTL p-value is 0.0523. After using Cauchy combination test, the combined p-value is 0.0328. We can argue that using combined p-values will allow us consider one p-value for a gene, which involves half the number of experiments as opposed to considering all the combination of genes and modalities, thereby offering an advantage when conducting multiple comparisons using the Bonferroni adjustment.
+
+We still need to get more eQTL and methylQTL p-values that can span multiple modalities for a gene.
+
+```{r MR_analysis_results, eval=FALSE, include=FALSE}
+head(sort(results[,"SMR_singleSNP_Cauchy_cauchy"]))
+length(genes)
+0.05 / length(genes)
+sum(!is.na(xQTL_cis_filtered[, c("e_zx_est", "p_zx_est", "metab_zx_est")]))
+0.05 / sum(!is.na(xQTL_cis_filtered[, c("e_zx_est", "p_zx_est", "metab_zx_est")]))
+#sum(!is.na(xQTL_cis_filtered[, c("m_zx_est", "e_zx_est", "p_zx_est", "metab_zx_est")]))
+#0.05 / sum(!is.na(xQTL_cis_filtered[, c("m_zx_est", "e_zx_est", "p_zx_est", "metab_zx_est")]))
+#results['DNMT3A',]
+#results[order(results[,"SMR_singleSNP_Cauchy_cauchy"]), ]
+```
+
+```{r manhattan, eval=FALSE, include=FALSE}
+# chromosome length -- See https://msmith.de/2019/06/05/chrom-lengths-in-bioc.html
+library(GenomicFeatures)
+chrom_length_file = "cis/chrom_length_grch37_ensembl.csv"
+if (!file.exists(chrom_length_file)) {
+  chrom_length = getChromInfoFromBiomart(biomart="ENSEMBL_MART_ENSEMBL",
+                        host="grch37.ensembl.org",
+                        dataset="hsapiens_gene_ensembl") %>%
+    dplyr::arrange(chrom)
+  write.csv(chrom_length, file = chrom_length_file)
+} else {
+  chrom_length = read.csv(file = chrom_length_file)
+}
+
+# Cauchy
+# See https://www.r-graph-gallery.com/101_Manhattan_plot.html
+library(qqman)
+results_with_coords = merge(xQTL_cis_filtered, results, by.x = "Symbol", by.y = 0, all.x = FALSE, all.y = TRUE)
+results_with_coords = results_with_coords[!duplicated(results_with_coords$Symbol), ]
+results_with_coords = merge(results_with_coords, chrom_length, by.x = "chr", by.y = "chrom", all.x = TRUE, all.y = FALSE)
+results_with_coords = results_with_coords[!duplicated(results_with_coords$Symbol), ]
+
+# not combined
+results_with_coords$SMR_expression = results_with_coords$SMR_OneModality1
+results_with_coords$SMR_protein = results_with_coords$SMR_OneModality2
+results_with_coords$SMR_metabolite = results_with_coords$SMR_OneModality3
+results_with_coords_long = pivot_longer(results_with_coords, cols=c("SMR_expression", "SMR_protein", "SMR_metabolite"), names_to = "modality", values_to = "pval_SMR")
+
+results_with_coords_for_plot = results_with_coords
+results_with_coords_long_for_plot = results_with_coords_long
+
+for (chr in 1:22) {
+  # set -log10(p) to -1 to hide the boundaries:
+  results_with_coords_for_plot = results_with_coords_for_plot %>% add_row(chr = chr, BP = 1, SMR_singleSNP_Cauchy_cauchy = 10)
+  results_with_coords_for_plot = results_with_coords_for_plot %>% add_row(chr = chr, BP = chrom_length$length[chrom_length$chrom == chr], SMR_singleSNP_Cauchy_cauchy = 10)
+    results_with_coords_long_for_plot = results_with_coords_long_for_plot %>% add_row(chr = chr, BP = 1, SMR_singleSNP_Cauchy_cauchy = 10)
+  results_with_coords_long_for_plot = results_with_coords_long_for_plot %>% add_row(chr = chr, BP = chrom_length$length[chrom_length$chrom == chr], SMR_singleSNP_Cauchy_cauchy = 10)
+}
+
+# TODO: technically the coords are from SNPs -- need to change to genes if we really want to be precise (at most 1 M bp apart)
+# manhattan(results_with_coords_for_plot, chr="chr", bp="BP", snp="Symbol", p="pval_SMR_topSNP_Cauchy_cauchy",
+#           annotatePval = 0.1,
+#           main = "SMR P-values after Cauchy combination",
+#           suggestiveline = -log10(0.05 / nrow(results)) - 2,
+#           genomewideline = -log10(0.05 / nrow(results)),
+#           ylim = c(0, 4))
+
+# using ggplot2 instead; see  https://www.r-graph-gallery.com/101_Manhattan_plot.html
+results_with_coords_for_ggplot = results_with_coords
+for (chr in 1:22) {
+  # set -log10(p) to -1 to hide the boundaries:
+  results_with_coords_for_ggplot = results_with_coords_for_ggplot %>% add_row(chr = chr, BP = 0, SMR_singleSNP_Cauchy_cauchy = NA)
+}
+don = chrom_length %>% as_tibble() %>%
+  # Compute chromosome size
+  filter(chrom %in% 1:22) %>%
+  dplyr::mutate(chr = as.numeric(chrom)) %>%
+  arrange(chr) %>%
+  # Calculate cumulative position of each chromosome
+  mutate(tot=cumsum(as.numeric(length))-length) %>%
+  dplyr::select(chr, tot) %>%
+  # Add this info to the initial dataset
+  left_join(results_with_coords_for_ggplot, ., by=c("chr"="chr")) %>%
+  # Add a cumulative position of each SNP
+  arrange(chr, BP) %>%
+  mutate(BPcum=BP+tot)
+
+axisdf = don %>% group_by(chr) %>% summarize(center=( max(BPcum) + min(BPcum) ) / 2 )
+ggplot(don, aes(x=BPcum, y=-log10(SMR_singleSNP_Cauchy_cauchy))) +
+    # Show all points (color according to chr)
+    #geom_point( aes(color=as.factor(chr)), alpha=0.8, size=1.3) +
+    #scale_color_manual(values = rep(c("grey", "skyblue"), 22 )) +
+    # Show all points (color according to omic modality)
+    geom_point(alpha=0.8, size=1.3) +
+    geom_hline(yintercept=-log10(0.05/length(genes))) +
+    # custom X axis:
+    scale_x_continuous( label = axisdf$chr, breaks= axisdf$center ) +
+    #scale_y_continuous(expand = c(0, 0), limits = c(0, 4)) +     # remove space between plot area and x axis
+    # Custom the theme:
+    theme_bw() +
+    theme( 
+      legend.position="none",
+      panel.border = element_blank(),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank()
+    )
+
+# TODO: technically the coords are from SNPs -- need to change to genes
+# TODO: change the color of point to reflect methylation, expression, metabolomics, etc.
+# manhattan(results_with_coords_long_for_plot, chr="chr", bp="BP", snp="Symbol", p="pval_SMR",
+#           annotatePval = 0.1,
+#           main = "SMR P-values before combination",
+#           suggestiveline = -log10(0.05 / nrow(results) / 3) - 2,
+#           genomewideline = -log10(0.05 / nrow(results) / 3),
+#           ylim = c(0, 4))
+
+
+
+# using ggplot2 instead; see  https://www.r-graph-gallery.com/101_Manhattan_plot.html
+results_with_coords_long_for_ggplot = results_with_coords_long
+for (chr in 1:22) {
+  # set -log10(p) to -1 to hide the boundaries:
+  results_with_coords_long_for_ggplot = results_with_coords_long_for_ggplot %>% add_row(chr = chr, BP = 0, pval_SMR = NA)
+}
+library(scico)
+don = chrom_length %>% as_tibble() %>%
+  # Compute chromosome size
+  filter(chrom %in% 1:22) %>%
+  dplyr::mutate(chr = as.numeric(chrom)) %>%
+  arrange(chr) %>%
+  # Calculate cumulative position of each chromosome
+  mutate(tot=cumsum(as.numeric(length))-length) %>%
+  dplyr::select(chr, tot) %>%
+  # Add this info to the initial dataset
+  left_join(results_with_coords_long_for_ggplot, ., by=c("chr"="chr")) %>%
+  # Add a cumulative position of each SNP
+  arrange(chr, BP) %>%
+  mutate(BPcum=BP+tot)
+
+axisdf = don %>% group_by(chr) %>% summarize(center=( max(BPcum) + min(BPcum) ) / 2 )
+ggplot(don, aes(x=BPcum, y=-log10(pval_SMR))) +
+    # Show all points (color according to chr)
+    #geom_point( aes(color=as.factor(chr)), alpha=0.8, size=1.3) +
+    #scale_color_manual(values = rep(c("grey", "skyblue"), 22 )) +
+    # Show all points (color according to omic modality)
+    geom_point( aes(color=modality), alpha=0.8, size=1.3) +
+    scale_color_scico_d(na.translate=FALSE) +
+    geom_hline(yintercept=-log10(0.05/length(genes)/3)) +
+    # custom X axis:
+    scale_x_continuous( label = axisdf$chr, breaks= axisdf$center ) +
+    #scale_y_continuous(expand = c(0, 0), limits = c(0, 4)) +     # remove space between plot area and x axis
+    # Custom the theme:
+    theme_bw() +
+    theme(
+      #legend.position="none",
+      panel.border = element_blank(),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank()
+    )
+
+
+# show top combined p-values
+results_with_coords %>% as_tibble() %>%
+  arrange(SMR_singleSNP_Cauchy_cauchy) %>%
+  dplyr::select(Symbol, SMR_singleSNP_Cauchy_cauchy)
+
+#  show p-values before combination
+results_with_coords_long %>% as_tibble() %>% 
+  arrange(pval_SMR) %>%
+  dplyr::select(Symbol, pval_SMR, modality) %>%
+  mutate(pval_SMR_adjusted_for_3_modalties = pval_SMR * 3)
+```
+
+```{r corr_SMR, include=FALSE, eval=FALSE}
+# correlation between z scores when the two underlying xQTLs are independent
+set.seed(1234)
+n_z = 10000000
+z = rnorm(n_z)
+ztemp = rnorm(n_z)
+z1 = rnorm(n_z)
+z2 = rnorm(n_z)
+# the covariance between SMR when z1 and z2 are independent (not likely even when z1 and z2 come from different studies):
+# 0.194
+cov(-2*pchisq(1/(z^(-2)+z1^(-2)), df = 1, lower.tail = FALSE, log.p = TRUE),
+    -2*pchisq(1/(z^(-2)+z2^(-2)), df = 1, lower.tail = FALSE, log.p = TRUE))
+
+# could the two underlying xQTLs be independent if they come from different samples?
+# one sample
+set.seed(1234)
+n_X = 1000
+X2 = X1 = rbinom(prob=0.4, size=2, n_X)
+Y1 = X1 + 0.5*rnorm(n_X)
+Y2 = X2 + 0.5*rnorm(n_X)
+n_times = 1000
+Z1 = Z2 = rep(NA, n_times)
+for (i in seq_len(n_times)) {
+  subset = sample(n_X, replace=TRUE)
+  Z1[i] = coefficients(summary(lm(Y1 ~ X1, subset = subset)))['X1', 't value']
+  Z2[i] = coefficients(summary(lm(Y2 ~ X2, subset = subset)))['X2', 't value']
+}
+cor(Z1, Z2)
+plot(Z1, Z2)
+
+# two sample
+set.seed(1234)
+n_X = 1000
+X1 = rbinom(prob=0.4, size=2, n_X)
+Y1 = X1 + 0.5*rnorm(n_X)
+X2 = rbinom(prob=0.4, size=2, n_X)
+Y2 = X2 + 0.5*rnorm(n_X)
+n_times = 1000
+Z1 = Z2 = rep(NA, n_times)
+for (i in seq_len(n_times)) {
+  subset = sample(n_X, replace=TRUE)
+  Z1[i] = coefficients(summary(lm(Y1 ~ X1, subset = subset)))['X1', 't value']
+  Z2[i] = coefficients(summary(lm(Y2 ~ X2, subset = subset)))['X2', 't value']
+}
+cor(Z1, Z2)
+plot(Z1, Z2)
+
+```

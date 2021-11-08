@@ -1,0 +1,1018 @@
+---
+title: "Reproducible figures in a comparison of summary MR methods for multi-modality omics data"
+author: "Chong Jin"
+date: "10/27/2021"
+fontsize: 11pt  # only works for pdf
+geometry: margin=1.5in  # only works for pdf
+output:
+  html_document:
+    highlight: tango
+    number_sections: yes
+    theme: journal
+    toc: yes
+    toc_depth: 3
+    toc_float:
+      collapsed: yes
+      smooth_scroll: no
+  pdf_document:
+    number_sections: yes
+    keep_tex: yes
+    toc: yes
+    toc_depth: 3
+# header-includes: \usepackage{mathtools}  # especially used for pdflatex -- need to uncomment for pdflatex to compile with \newcommand
+include-before: \newcommand{\coloneqq}{\mathrel{:=}}  # this is better suited for html but is usable in pdf
+include-after: 
+- \bibliographystyle{plain}
+- \bibliography{library}  # these are only needed for pdf
+---
+
+```{r results='hide', message=FALSE, warning=FALSE}
+library(tidyverse)
+library(LDlinkR)
+library(pbapply)
+library(MendelianRandomization)
+library(GenomicFeatures)
+library(scico)
+library(ggpubr)
+library(tidyr)
+library(wesanderson)
+library(ggplot2)
+library(ggrepel)
+library(plotly)
+real_data_dir = "."
+simulation_dir = "./simulation"
+source(file.path(simulation_dir, "SMR_functions.R"))  # get_p_values_from_summary()
+```
+
+
+![Mendelian Randomization applied to GWAS and xQTL data](../intro.png)
+
+# Combination functions
+
+```{r combination_functions, fig.dim=c(7.2, 6)}
+pval_x = seq(0, 0.1, by=0.005)
+pval_y = seq(0, 0.1, by=0.005)
+pval_Cauchy_matrix = pval_HMP_matrix = pval_Fisher_matrix = pval_Fisher_corrected_matrix =
+  matrix(nrow = length(pval_x), ncol = length(pval_x))
+m = 2
+# suppose the correlation between two z-values that we combine is 0.5,
+r = 0.5 #* (1 + (1-rho^2)/(2*(n-3)))
+# we calculate delta, the covariance between -2*log(p-values) after the two z-values are transformed:
+delta = 3.9081*r^2 + 0.0313*r^4 + 0.1022*r^6 - 0.1378*r^8 + 0.0941*r^10 #- 3.9081/n*(1-r^2)^2
+mu = 2*m
+sigma2 = 4*m
+cov_Fisher = delta
+sigma2_corrected = 4*m + 2*cov_Fisher
+for (i in seq_along(pval_x)) {
+  for (j in seq_along(pval_y)) {
+    stat_Cauchy = 1/2 * sum(tan((0.5 - c(pval_x[i], pval_y[j])) * pi))
+    pval_Cauchy_matrix[i, j] = 0.5 - atan(stat_Cauchy)/pi
+    pval_HMP_matrix[i, j] = harmonicmeanp::p.hmp(1e-100+c(pval_x[i], pval_y[j]), L = 2)
+    stat_Fisher = -2*(log(pval_x[i]) + log(pval_y[j]))
+    pval_Fisher_matrix[i, j] = pgamma(stat_Fisher, shape=mu^2/sigma2, scale=sigma2/mu, lower.tail=FALSE)
+    pval_Fisher_corrected_matrix[i, j] = pgamma(stat_Fisher, shape=mu^2/sigma2_corrected, scale=sigma2_corrected/mu, lower.tail=FALSE)
+  }
+}
+# pdf(file.path(real_data_dir, "figures/Cauchy_vs_HMP_contour.pdf"), width=7.2, height=8)
+# opar = par(mfrow=c(2,2))
+# contour(pval_x, pval_y, pval_Cauchy_matrix, xlab="p-value 1", ylab="p-value 2", main = "Cauchy combination method")
+# contour(pval_x, pval_y, pval_HMP_matrix, xlab="p-value 1", ylab="p-value 2", main = "harmonic mean p-value (HMP)")
+# contour(pval_x, pval_y, pval_Fisher_matrix, xlab="p-value 1", ylab="p-value 2", main = "Fisher combination method")
+# contour(pval_x, pval_y, pval_Fisher_corrected_matrix, xlab="p-value 1", ylab="p-value 2", main = "Fisher combination method\ncorrelation between two z-values = 0.5")
+# par(opar)
+# dev.off()
+# opar = par(mfrow=c(2,2))
+# contour(pval_x, pval_y, pval_Cauchy_matrix, xlab="p-value 1", ylab="p-value 2", main = "Cauchy combination method")
+# contour(pval_x, pval_y, pval_HMP_matrix, xlab="p-value 1", ylab="p-value 2", main = "harmonic mean p-value (HMP)")
+# contour(pval_x, pval_y, pval_Fisher_matrix, xlab="p-value 1", ylab="p-value 2", main = "Fisher combination method")
+# contour(pval_x, pval_y, pval_Fisher_corrected_matrix, xlab="p-value 1", ylab="p-value 2", main = "Fisher combination method\ncorrelation between two z-values = 0.5")
+# par(opar)
+
+pval_combination = data.frame(pval_x = rep(pval_x, each = length(pval_y)),
+                              pval_y = rep(pval_y, times = length(pval_x)),
+                              Cauchy = as.numeric(pval_Cauchy_matrix),
+                              HMP = as.numeric(pval_HMP_matrix),
+                              Fisher = as.numeric(pval_Fisher_matrix),
+                              Fisher_corrected = as.numeric(pval_Fisher_corrected_matrix))
+pval_combination_long = gather(pval_combination, 
+                               key="method", value="pval_combined",
+                               Cauchy:Fisher_corrected,
+                               factor_key=TRUE)
+method_labeller = c(`Cauchy` = "Cauchy combination method",
+                    `HMP` = "harmonic mean p-value (HMP)",
+                    `Fisher` = "Fisher combination method",
+                    `Fisher_corrected` = "Fisher combination method\ncorrelation between two z-values = 0.5")
+v = ggplot(pval_combination_long, aes(pval_x, pval_y, z = pval_combined)) +
+  geom_contour_filled(alpha = 0.75) +
+  scale_fill_viridis_d(direction=-1) +
+  facet_wrap( ~ method, labeller = as_labeller(method_labeller)) +
+  xlab("p-value 1") +
+  ylab("p-value 2") +
+  guides(fill=guide_legend(title="combined p-value"))
+v
+pdf(file.path(real_data_dir, "figures/Cauchy_vs_HMP_contour.pdf"), width=7.2, height=6)
+v
+dev.off()
+```
+
+A comparison of Cauchy combination method when combining two p-values. 
+The numbers marked on the contour plot are the combined p-values.
+
+The HMP method is overly conservative.
+
+# Simulation
+
+## Read the output of simulation
+
+```{r simulation_figures}
+# Generate simulation settings
+simulations = expand.grid(
+  outcome = c("continuous", "binary_use_control_in_xQTL", "binary_use_all_in_xQTL"),
+  pleiotropy = c("horizontal", "vertical"),
+  #sample_size = c(500, 1000, 2000),
+  IV_strength = c(0.5, 1, 2),
+  effect = c(0, 0.1),
+  overlap = c(0, 0.5, 1),
+  r2 = c(0, 0.01, 0.2),
+  number_of_SNPs = c(5, 20),
+  xQTL_from_one_sample = c(TRUE, FALSE)
+)
+
+r2_values = c(0, 0.01, 0.2)
+
+data_all = read.csv(file.path(simulation_dir, "result.csv"))
+
+data_all$overlap = sprintf("%s; xQTLs from same sample", data_all$overlap)
+data_all$overlap[!data_all$xQTL_from_one_sample] = "0; separate xQTL samples"
+
+data_long = gather(data_all, "method", "power", Multivariable:SMR_singleSNP_Fisher_chisq, factor_key=TRUE)
+data_long$effect = factor(data_long$effect)
+data_long$positive_rate = data_long$power
+data_long$positive_rate[data_long$effect == 0] = - data_long$positive_rate[data_long$effect == 0]
+
+data_long_power = data_long[data_long$effect == 0.1, ]
+data_long_type_I_error = data_long[data_long$effect == 0, ]
+
+all.equal(data_long_power$outcome, data_long_type_I_error$outcome)
+all.equal(data_long_power$pleiotropy, data_long_type_I_error$pleiotropy)
+all.equal(data_long_power$IV_strength, data_long_type_I_error$IV_strength)
+all.equal(data_long_power$overlap, data_long_type_I_error$overlap)
+all.equal(data_long_power$r2, data_long_type_I_error$r2)
+
+data_long_power$type_I_error = data_long_type_I_error$power
+
+# order the barplot by mean type I error
+aggr = aggregate(power ~ method, data=data_long_type_I_error, mean)
+aggr = aggr[order(aggr$power), ]
+data_long$method = factor(data_long$method, levels = rev(levels(aggr$method)))
+method_color = wes_palette(length(levels(data_long$method)),
+                                     name = "Darjeeling1", type = "continuous")
+names(method_color) = levels(data_long$method)
+```
+
+## Compare overlap and outcome (MR methods)
+
+Columns: overlap
+
+Rows: outcome
+
+Groups: valid methods (excluded: methods not being able to control for LD, 
+ Fisher_chisq or MinP, t-distribution, one modality)
+
+Each point for a simulation scenario
+
+Color by number of SNPs as instrumental variables (5 or 20)
+
+Conclusion: methods that combine multiple SNPs through a regression model
+are invalid if there is excessive overlap between two samples when not
+using only control samples in xQTLs.
+
+We notice that the type I error problem is the worst when we use continuous outcomes and there is
+overlap between GWAS and xQTL samples. There is still type I error problem when we use both cases
+and controls to estimate xQTL and there is overlap between GWAS and xQTL samples. The remedy when
+there is overlap between GWAS and xQTL samples is to use only control samples to estimate xQTLs when
+we have binary outcomes.
+
+We notice that there is no need for us to use t-distribution methods, as using normal distribution
+will control type I error as well.
+
+```{r type_I_error_compare_overlap_and_outcome, fig.dim = c(10, 8.5)}
+facet_labeller = c(`0; xQTLs from same sample`="overlap=0 btw. xQTL and GWAS samples",
+                   `0.5; xQTLs from same sample`="overlap=0.5 btw. xQTL and GWAS samples",
+                   `1; xQTLs from same sample`="overlap=1 btw. xQTL and GWAS samples",
+                   `binary_use_all_in_xQTL`="outcome: binary, xQTL: case & ctrl",
+                   `binary_use_control_in_xQTL`="outcome: binary, xQTL: ctrl",
+                   `continuous`="outcome: continuous",
+                   `Correct for LD`="methods corrected for LD",
+                   `Ignore LD`="methods ignored LD",
+                   `5`="simulation with 5 SNPs",
+                   `20`="simulation with 20 SNPs",
+                   `horizontal`="horizontal pleiotropy",
+                   `vertical`="vertical pleiotropy"
+                   )
+pdf(file.path(real_data_dir, "figures/simulation_type_I_error_overlap_and_outcome.pdf"), width=10, height=8.5)
+p = ggplot(subset(data_long_type_I_error,
+                  !grepl("^IVW|^Multivariable$|^Multivariable_tdist$", method) &
+                  !grepl("MinP|Fisher_chisq", method) &
+                  !grepl("Modality", method) &
+                  !grepl("tdist", method) &
+                  !grepl("separate xQTL sample", overlap)),
+           aes(x=method, y=power, fill=method)) +
+    # geom_boxplot() +
+    scale_color_manual(values = wes_palette("Chevalier1")) +
+    geom_jitter(aes(color=as.factor(number_of_SNPs)), size=0.5, alpha=0.75) +
+    theme_bw() +
+    facet_grid(outcome ~ overlap, labeller = as_labeller(facet_labeller)) + 
+    # scale_x_discrete(guide = guide_axis(n.dodge = 2)) +
+    # coord_flip() +a
+    theme(axis.line = element_line(colour = "black"),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank(),
+      plot.margin = margin(t = .35, r = .1, b = 0, l = .2, unit = "in"),
+      # legend.position = "none",
+      # legend.text=element_text(size=8),
+      axis.text.x = element_text(angle = 45, size = 8,
+        color = "black", face = "plain", vjust = 1, hjust = 1),
+      axis.text.y = element_text(size=8)) +
+    labs(color="number of SNPs") +
+    guides(fill=FALSE) +
+    geom_hline(yintercept=0.05, color="red") + 
+    xlab("") + 
+    ylab("Type I error")
+p
+dev.off()
+p
+```
+
+## Compare R2 (MR methods)
+
+Columns: R2
+
+Rows: comparable methods accounting for vs. not accounting for R2
+
+Groups: methods (excluded: Fisher_chisq or MinP, SMR, GSMR, t-distribution, one modality)
+
+Each point for a simulation scenario
+
+Color by number of SNPs as instrumental variables (5 or 20)
+
+Conclusion: when R2 is high, methods not adjusting for R2 are invalid.
+Methods that use multiple correlated SNPs in a regression model while
+not correcting for LD have serious inflated type I error problems.
+
+```{r type_I_error_compare_r2, fig.dim = c(5, 8)}
+data_long_type_I_error_LD = data_long_type_I_error
+data_long_type_I_error_LD = data_long_type_I_error_LD[-grep("Fisher", data_long_type_I_error_LD$method), ]
+data_long_type_I_error_LD$correct_for_LD = "Correct for LD"
+uncorrected_status = "Ignore LD"
+Multivariable_rows = which(data_long_type_I_error_LD$method == "Multivariable")
+# data_long_type_I_error_LD[Multivariable_rows, c("method", "correct_for_LD")] = rep(c("MultivariableLD", uncorrected_status), each = length(Multivariable_rows))
+data_long_type_I_error_LD[Multivariable_rows, c("correct_for_LD")] = rep(c(uncorrected_status), each = length(Multivariable_rows))
+IVW_rows = grep("IVW", data_long_type_I_error_LD$method)
+# data_long_type_I_error_LD[IVW_rows, c("method", "correct_for_LD")] = c(sub("IVW", "WGLR", data_long_type_I_error_LD$method[IVW_rows]), rep(uncorrected_status, length(IVW_rows)))
+data_long_type_I_error_LD[IVW_rows, c("correct_for_LD")] = c(rep(uncorrected_status, length(IVW_rows)))
+p = ggplot(subset(data_long_type_I_error_LD,
+                  !grepl("MinP|Fisher_chisq", method) &
+                  !grepl("Modality", method) &
+                  !grepl("tdist", method) &
+                  !grepl("SMR", method) &
+                  !grepl("separate xQTL sample", overlap) &
+                  (grepl("0; xQTLs from same sample", overlap) |
+                   grepl("binary_use_control_in_xQTL", outcome)))  %>%
+           mutate(method = fct_relevel(method, "Multivariable", "MultivariableLD", "IVW_Cauchy_cauchy", "WGLR_Cauchy_cauchy", "IVW_HMP", "WGLR_HMP")),
+           aes(x=method, y=power, fill=method)) +
+    # geom_boxplot() +
+    scale_color_manual(values = wes_palette("GrandBudapest1")) +
+    geom_jitter(aes(color=as.factor(r2)), size=0.5, alpha=0.75) +
+    theme_bw() +
+    facet_grid(rows = vars(number_of_SNPs, correct_for_LD), labeller = as_labeller(facet_labeller)) + 
+    # scale_x_discrete(guide = guide_axis(n.dodge = 2)) +
+    # coord_flip() +a
+    theme(axis.line = element_line(colour = "black"),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank(),
+      plot.margin = margin(t = .35, r = .1, b = 0, l = .2, unit = "in"),
+      # legend.position = "none",
+      # legend.text=element_text(size=8),
+      axis.text.x = element_text(angle = 45, size = 8,
+        color = "black", face = "plain", vjust = 1, hjust = 1),
+      axis.text.y = element_text(size=8)) +
+    labs(color="r2 btw. SNPs") +
+    guides(color=FALSE, fill=FALSE) +
+    geom_hline(yintercept=0.05, color="red") + 
+    xlab("") + 
+    ylab("Type I error")
+pdf(file.path(real_data_dir, "figures/simulation_type_I_error_LD.pdf"), width=5, height=8)
+p
+dev.off()
+p
+```
+
+## Compare p-value combination methods (type I error)
+
+Columns: WGLR_Cauchy_cauchy, WGLR_HMP, WGLR_Fisher_gamma,
+         WGLR_Fisher_chisq, WGLR_MinP
+
+Rows: combine them all together using jittered points
+(or Horizontal/vertical, IV strength)
+
+outcome type = binary_use_all_in_xQTL, r2 = 0.2
+overlap: 0; xQTLs from same sample
+
+Exclude simulation settings not valid because of overlap and outcome combinations
+and methods not valid because not accounting for R2
+
+The figure in the main text corresponds to number of SNPs = 20.
+
+Conclusion:  Cauchy, HMP, and Fisher_gamma will control type I error while Fisher_chisq and MinP will not control type I error.
+
+```{r type_I_error_compare_pval_combination, fig.dim = c(6, 8)}
+p = ggplot(subset(data_long_type_I_error,
+                   grepl("WGLR_Fisher_gamma|WGLR_Cauchy_cauchy|GSMR_Cauchy_cauchy|SMR_allSNPs_Cauchy_cauchy|SMR_singleSNP_Cauchy_cauchy|WGLR_HMP|SMR_allSNPs_HMP|SMR_singleSNP_HMP|WGLR_Fisher_chisq|GSMR_Fisher_chisq|SMR_allSNPs_Fisher_chisq|SMR_singleSNP_Fisher_chisq|WGLR_MinP|GSMR_MinP", method) &
+                  !grepl("separate xQTL sample", overlap) &
+                  (grepl("0; xQTLs from same sample", overlap) |
+                   grepl("binary_use_control_in_xQTL", outcome))) %>%
+           mutate(method = fct_relevel(method,  "WGLR_Fisher_gamma", "WGLR_Cauchy_cauchy", "GSMR_Cauchy_cauchy", "SMR_allSNPs_Cauchy_cauchy", "SMR_singleSNP_Cauchy_cauchy", "WGLR_HMP", "SMR_allSNPs_HMP", "SMR_singleSNP_HMP", "WGLR_Fisher_chisq", "GSMR_Fisher_chisq", "SMR_allSNPs_Fisher_chisq", "SMR_singleSNP_Fisher_chisq", "WGLR_MinP", "GSMR_MinP")),
+           aes(x=method, y=power, fill=method)) +
+    # geom_boxplot() +
+    scale_color_manual(values = wes_palette("BottleRocket2")) +
+    geom_jitter(aes(color=as.factor(r2)), size=0.5, alpha=0.75) +
+    theme_bw() +
+    facet_grid(rows = vars(number_of_SNPs), labeller = as_labeller(facet_labeller)) + 
+    # scale_x_discrete(guide = guide_axis(n.dodge = 2)) +
+    # coord_flip() +
+    theme(axis.line = element_line(colour = "black"),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank(),
+      plot.margin = margin(t = .35, r = .1, b = 0, l = .2, unit = "in"),
+      # legend.position = "none",
+      # legend.text=element_text(size=8),
+      axis.text.x = element_text(angle = 45, size = 8,
+        color = "black", face = "plain", vjust = 1, hjust = 1),
+      axis.text.y = element_text(size=8)) +
+    labs(color="r2 btw. SNPs") +
+    guides(fill=FALSE) +
+    geom_hline(yintercept=0.05, color="red") + 
+    xlab("") + 
+    ylab("Type I error")
+pdf(file.path(real_data_dir, "figures/simulation_type_I_error_pval_combination.pdf"), width=6, height=8)
+p
+dev.off()
+p
+```
+
+## Compare p-value combination methods (power)
+
+Columns: MultivariableLD, WGLR_Fisher_gamma, WGLR_Cauchy_cauchy, WGLR_HMP,
+         GSMR_Cauchy_cauchy, GSMR_HMP, 
+         SMR_allSNPs_Cauchy_cauchy, SMR_allSNPs_HMP, 
+         SMR_singleSNP_Cauchy_cauchy, SMR_singleSNP_HMP
+
+Rows: Horizontal/vertical, IV strength
+
+outcome type = binary_use_all_in_xQTL, r2 = 0.2
+overlap: 0; xQTLs from same sample
+Number of number_of_SNPs_to_show == 5
+
+The figure in the main text corresponds to number of SNPs = 5.
+
+Conclusion: WGLR_Fisher_gamma and WGLR_Cauchy_cauchy are powerful. GSMR_Cauchy_cauchy is about
+as powerful when the IVs are strong but is less powerful with weak IVs.
+
+```{r power_compare_pval_combination, fig.dim = c(5, 6)}
+rtwo = 0.2
+data_long_power_subset = subset(data_long_power,
+                   grepl("^MultivariableLD$|WGLR_Fisher_gamma|WGLR_Cauchy_cauchy|WGLR_HMP|GSMR_Cauchy_cauchy|GSMR_HMP|SMR_allSNPs_Cauchy_cauchy|SMR_allSNPs_HMP|SMR_singleSNP_Cauchy_cauchy|SMR_singleSNP_HMP", method) &
+                   grepl("0; xQTLs from same sample", overlap) &
+                   grepl("binary_use_all_in_xQTL", outcome) &
+                   r2 == rtwo) %>%
+  mutate(method = fct_relevel(method, "MultivariableLD", "WGLR_Fisher_gamma", "WGLR_Cauchy_cauchy", "WGLR_HMP", "GSMR_Cauchy_cauchy", "GSMR_HMP", "SMR_allSNPs_Cauchy_cauchy", "SMR_allSNPs_HMP", "SMR_singleSNP_Cauchy_cauchy", "SMR_singleSNP_HMP"))
+data_long_type_I_error_subset = subset(data_long_type_I_error,
+                   grepl("^MultivariableLD$|WGLR_Fisher_gamma|WGLR_Cauchy_cauchy|WGLR_HMP|GSMR_Cauchy_cauchy|GSMR_HMP|SMR_allSNPs_Cauchy_cauchy|SMR_allSNPs_HMP|SMR_singleSNP_Cauchy_cauchy|SMR_singleSNP_HMP", method) &
+                   grepl("0; xQTLs from same sample", overlap) &
+                   grepl("binary_use_all_in_xQTL", outcome) &
+                   r2 == rtwo) %>%
+  mutate(method = fct_relevel(method, "MultivariableLD", "WGLR_Fisher_gamma", "WGLR_Cauchy_cauchy", "WGLR_HMP", "GSMR_Cauchy_cauchy", "GSMR_HMP", "SMR_allSNPs_Cauchy_cauchy", "SMR_allSNPs_HMP", "SMR_singleSNP_Cauchy_cauchy", "SMR_singleSNP_HMP"))
+p = ggplot(data_long_power_subset,
+           aes(x=method, y=power, fill=as_factor(IV_strength))) +
+        geom_bar(position="dodge", stat="identity") +
+        facet_grid(rows = vars(pleiotropy), labeller = as_labeller(facet_labeller)) + 
+        geom_vline(xintercept=0.05, linetype="solid", color = "black", size = 0.2) +
+        # geom_rect(xmin=-Inf, xmax=Inf, ymin=-Inf, ymax=0, fill="grey80", color=NA, alpha=0.05) +
+        # geom_hline(yintercept=0, linetype="solid", color = "black") +
+        # geom_hline(yintercept=-0.05, linetype="dotted", color = "red") +
+        scale_fill_scico_d() +
+        # scale_fill_manual(values=method_color) +
+        theme_bw() +
+        # coord_flip() +
+        theme(#axis.line = element_line(colour = "black"),
+              #panel.grid.major = element_blank(),
+              #panel.grid.minor = element_blank(),
+              #panel.background = element_blank(),
+              plot.margin = margin(t = .35, r = .1, b = 0, l = .6, unit = "in"),
+              # legend.position = "none",
+              # legend.text=element_text(size=8),
+              axis.text.x = element_text(angle = 45, size = 8,
+                color = "black", face = "plain", vjust = 1, hjust = 1),
+              axis.text.y = element_text(size=8)) +
+        labs(fill="IV Strength")
+        # ggtitle(paste0(
+        #  "Different p-value combination methods\n",
+        #  "outcome type = binary_use_all_in_xQTL, r2 = ", rtwo, "\n",
+        #  "overlap: 0; xQTLs from same sample"))
+pdf(file.path(real_data_dir, "figures/simulation_power_pval_combination_number_of_SNPs_5.pdf"), width=5, height=6)
+p %+% subset(data_long_power_subset, number_of_SNPs == 5)
+dev.off()
+pdf(file.path(real_data_dir, "figures/simulation_power_pval_combination_number_of_SNPs_20.pdf"), width=5, height=6)
+p %+% subset(data_long_power_subset, number_of_SNPs == 20) 
+dev.off()
+pdf(file.path(real_data_dir, "figures/simulation_type_I_error_pval_combination_number_of_SNPs_5.pdf"), width=4, height=6)
+(p + 
+    geom_hline(yintercept=0.05, color="red") + 
+    ylab("Type I error") +
+    guides(fill=FALSE)) %+%
+  subset(data_long_type_I_error_subset, number_of_SNPs == 5)
+dev.off()
+pdf(file.path(real_data_dir, "figures/simulation_type_I_error_pval_combination_number_of_SNPs_20.pdf"), width=4, height=6)
+(p + 
+    geom_hline(yintercept=0.05, color="red") +
+    ylab("Type I error") +
+    guides(fill=FALSE)) %+%
+  subset(data_long_type_I_error_subset, number_of_SNPs == 20)
+dev.off()
+p %+% subset(data_long_power_subset, number_of_SNPs == 5) %>% ggplotly()
+```
+
+
+```{r type_I_error_Fisher_MinP, include=FALSE, eval=FALSE}
+# grepl("^IVW|Fisher|Modality|MinP|^Multivariable$|^Multivariable_tdist$", method)
+pdf(file.path(real_data_dir, "figures/simulation_type_I_error_Fisher_MinP_plot.pdf"), width=8, height=8)
+p = ggplot(subset(data_long_type_I_error, grepl("MinP|Fisher", method) & !grepl("IVW|gamma", method)), aes(x=method, y=power, fill=method)) +
+    # geom_boxplot() +
+    scale_color_scico_d(palette = "batlow") +
+    geom_jitter(aes(color=as.factor(r2)), size=0.5, alpha=1) +
+    theme_bw() +
+    # scale_x_discrete(guide = guide_axis(n.dodge = 2)) +
+    # coord_flip() +
+    theme(axis.line = element_line(colour = "black"),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank(),
+      plot.margin = margin(t = .35, r = .1, b = 0, l = .1, unit = "in"),
+      # legend.position = "none",
+      # legend.text=element_text(size=8),
+      axis.text.x = element_text(angle = 45, size = 8,
+        color = "black", face = "plain", vjust = 1, hjust = 1),
+      axis.text.y = element_text(size=8)) +
+    labs(color="r2") +
+    guides(fill=FALSE) +
+    geom_hline(yintercept=0.05) + 
+    xlab("") + 
+    ylab("Type I error")
+p
+dev.off()
+p
+```
+
+<!-- Methods that involve combining the p-value of summary MR using multiple modalities without -->
+<!-- correcting the correlation between the correlated p-values also cause inflated type I error problems. -->
+
+```{r type_I_error_controlled, include=FALSE, eval=FALSE}
+pdf(file.path(real_data_dir, "figures/simulation_type_I_error_controlled_plot.pdf"), width=8, height=8)
+p = ggplot(subset(data_long_type_I_error, !grepl("^IVW|chisq|Modality|MinP|^Multivariable$|^Multivariable_tdist$", method)), aes(x=method, y=power, fill=method)) +
+    # geom_boxplot() +
+    scale_color_manual(values = wes_palette("Moonrise3")) +
+    geom_jitter(aes(color=outcome, shape=overlap), size=0.7, alpha=1) +
+    theme_bw() +
+    # scale_x_discrete(guide = guide_axis(n.dodge = 2)) +
+    # coord_flip() +
+    theme(axis.line = element_line(colour = "black"),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank(),
+      plot.margin = margin(t = .35, r = .1, b = 0, l = .1, unit = "in"),
+      # legend.position = "none",
+      # legend.text=element_text(size=8),
+      axis.text.x = element_text(angle = 45, size = 8,
+        color = "black", face = "plain", vjust = 1, hjust = 1),
+      axis.text.y = element_text(size=8)) +
+    labs(color="outcome") +
+    guides(fill=FALSE) +
+    geom_hline(yintercept=0.05) + 
+    xlab("") + 
+    ylab("Type I error")
+p
+dev.off()
+p
+```
+
+
+
+<!-- Then we check the power: -->
+
+<!-- 1. When using multiple SNPs, including MultivariableLD method, and different p-value combination methods; -->
+
+<!-- 2. When using one SNP and different p-value combination methods; -->
+
+<!-- 3. When using one SNP vs. multiple SNPs. -->
+
+```{r simulation_one_vs_multiple_SNPs_figure, fig.dim = c(7, 6), include=FALSE, eval=FALSE}
+############################################################
+# p-value combinations 
+############################################################
+rtwo = 0.2
+o = "binary_use_all_in_xQTL"
+p = ggplot(subset(data_long, outcome == o & r2 == rtwo & overlap == "0; xQTLs from same sample" &
+                      !grepl("^IVW|chisq|Modality|MinP|^Multivariable$|tdist", method))
+             , aes(x = method, y = positive_rate, fill = method)) +
+        geom_bar(position="stack", stat="identity") +
+        facet_grid(IV_strength ~ number_of_SNPs + pleiotropy) +
+        geom_vline(xintercept=0.05, linetype="solid", color = "black", size = 0.2) +
+        geom_rect(xmin=-Inf, xmax=Inf, ymin=-Inf, ymax=0, fill="grey80", color=NA, alpha=0.05) +
+        geom_hline(yintercept=0, linetype="solid", color = "black") +
+        geom_hline(yintercept=-0.05, linetype="dotted", color = "red") +
+        #geom_hline(yintercept=-0.05*scale_factor, linetype="dotted", color = "red") +
+        #scale_y_continuous(labels = scale_function, limits = scale_function(c(-0.2, 1))) +
+        #scale_fill_scico_d() +
+        scale_fill_manual(values=method_color) +
+        theme_bw() +
+        # coord_flip() +
+        theme(axis.line = element_line(colour = "black"),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              panel.background = element_blank(),
+              plot.margin = margin(t = .35, r = .1, b = 0, l = .6, unit = "in"),
+              legend.position = "none",
+              legend.text=element_text(size=8),
+              axis.text.x = element_text(angle = 45, size = 8,
+                color = "black", face = "plain", vjust = 1, hjust = 1),
+              axis.text.y = element_text(size=8)) +
+        guides(fill=guide_legend(nrow=2,byrow=TRUE)) +
+        ggtitle(paste0(
+          "Different p-value combination methods\n",
+          "outcome type = binary_use_all_in_xQTL, r2 = ", rtwo, "\n",
+          "overlap: 0; xQTLs from same sample"))
+ggplotly(p + theme(plot.margin = margin(t = 1.5, r = .1, b = .9, l = .6, unit = "in")))
+pdf(file.path(real_data_dir, "figures/simulation_barplot_pval_combination.pdf"), width=7, height=6)
+p
+dev.off()
+```
+
+A comparison of p-value combination methods that can control for type I error in the presence of LD disequilibrium. 
+
+From the figure we can know:
+
+1. HMP always has lower power than Cauchy. Thus we will prefer to use Cauchy combination method.
+
+2. WGLR is the most powerful method when the instrumental variables are weak, and GSMR is the most powerful method when the instrumental variables are strong.
+
+3. The SMR methods are less powerful than WGLR and GSMR which model the LD disequilibrium. On whether or not to combine multiple SNPs using Cauchy combination method, it is advisable to use SMR from one single SNP when the instrumental variables are weak, and combine SMR statistics from multiple SNPs using Cauchy combination method when the instrumental variables are strong.
+
+In real data, we know that the instrumental variables are very weak. 
+MultivariableLD and GSMR will not provide an answer for most of the genes in the real data analysis.
+So we mainly show the results of WGLR_Cauchy_cauchy in the real data analysis.
+
+# Real data analysis
+
+Load the data files processed by ANDI and ROSMAP MR analysis.ipynb. The probes in the MHC region are removed: MHC region in hg19: MHC_chr = 6, MHC_start = 28477797, MHC_end = 33448354.
+
+```{r load_real_data}
+xQTL_cis = read_csv(file.path(real_data_dir, "analysis_using_meta_eQTL/xQTLs_expr_metab_prot.csv"))
+
+xQTL_cis = xQTL_cis[!is.na(xQTL_cis$pvalue_GWAS), ]
+dim(xQTL_cis)
+
+# verify that the MHC region has already been removed in the preprocessing steps
+# they have been removed because the data is from the eQTL meta analysis from ROS/MAP and CMC
+xQTL_cis = xQTL_cis[(xQTL_cis$chromosome != 6) | (xQTL_cis$snpLocation < 28477797) | (xQTL_cis$snpLocation > 33448354), ]
+dim(xQTL_cis)
+```
+
+```{r get_LD}
+snpid_groups = split(xQTL_cis$snpid, xQTL_cis$geneSymbol)
+
+# There is only one gene with more than 1000 genes. Due to the constraint of LDlinkR, we only
+# use the SNPs with the top 1000 smallest GWAS beta SEs.
+head(sort(sapply(snpid_groups, length), decreasing=TRUE))
+
+snpid_groups[["FHIT"]] = xQTL_cis[xQTL_cis$geneSymbol == "FHIT", ]$snpid[
+rank(-abs(xQTL_cis$beta_GWAS / xQTL_cis$statistic_GWAS)[xQTL_cis$geneSymbol == "FHIT"]) <= 1000]
+head(sort(sapply(snpid_groups, length), decreasing=TRUE))
+
+LDmatrix_list = NULL
+ldmatrix_file = "analysis_using_meta_eQTL/LDmatrix_expr_metab_prot.rds"
+if (!file.exists(ldmatrix_file)) {
+  Sys.setenv(LDLINK_TOKEN = "ae178767d608")
+  LDmatrix_list = pblapply(snpid_groups, 
+                         function(x) {
+                           if (length(x) == 1) return(NA)
+                           else {
+                             LD = LDmatrix(x, "CEU", "r2",
+                                  token = Sys.getenv("LDLINK_TOKEN"))
+                             if (ncol(LD) == nrow(LD) + 1) LD = LD[, -1]
+                             LD_is_not_NA_SNPs = !is.na(LD[, 1])
+                             LD = LD[LD_is_not_NA_SNPs, LD_is_not_NA_SNPs]
+                             rownames(LD) = colnames(LD)
+                             LD
+                           }
+                          })
+  saveRDS(LDmatrix_list, file=ldmatrix_file)
+} else {
+  LDmatrix_list = readRDS(ldmatrix_file)
+}
+```
+
+```{r compute_MR}
+genes = unique(xQTL_cis$geneSymbol)
+result_list = pblapply(genes, function (gene) {
+  snps = intersect(xQTL_cis$snpid[xQTL_cis$geneSymbol == gene], colnames(LDmatrix_list[[gene]]))
+  row_indices =  which(xQTL_cis$geneSymbol == gene & xQTL_cis$snpid %in% snps)
+  
+  zx_est = na.omit(t(xQTL_cis[row_indices, c("beta_expr", "beta_prot", "beta_metab")]))
+  zx_se = na.omit(zx_est / t(xQTL_cis[row_indices, c("statistic_expr", "statistic_prot", "statistic_metab")]))
+  zy_est = xQTL_cis[row_indices, "beta_GWAS"][[1]]
+  zy_se = (zy_est / xQTL_cis[row_indices, "statistic_GWAS"])[[1]]
+  
+  get_p_values_from_summary(zx_est, zx_se, zy_est, zy_se, 
+                            r2 = LDmatrix_list[[gene]][snps, snps],
+                            bp = xQTL_cis$snpLocation[row_indices], 
+                            max_r2 = 0.2, min_dist_bp = 1e5,
+                            include_number_of_SNPs = TRUE)
+})
+result_matrix = do.call("rbind", result_list)
+rownames(result_matrix) = genes
+```
+
+```{r agora_gene_list}
+# Agora (nominated targets) https://agora.ampadportal.org/genes
+agora_gene_list = read_csv(file.path(real_data_dir, "gene_list/agora_gene_list.csv"))
+length(agora_gene_list$hgnc_symbol)
+genes = unique(xQTL_cis$geneSymbol)
+length(agora_gene_list$hgnc_symbol)
+length(genes)
+length(intersect(agora_gene_list$hgnc_symbol, genes))
+# result_matrix_in_agora = result_matrix[intersect(agora_gene_list$hgnc_symbol, genes), ]
+
+# We will only analyze the genes that have at least a strong IV using
+# either expression, protein level, or metabolite level as exposure:
+strong_IV_cutoff = 0.05 / length(intersect(agora_gene_list$hgnc_symbol, genes))
+genes_expr = group_by(xQTL_cis, geneSymbol) %>% slice_min(order_by = pvalue_expr) %>% filter(pvalue_expr < strong_IV_cutoff) %>% pull(geneSymbol)
+genes_prot = group_by(xQTL_cis, geneSymbol) %>% slice_min(order_by = pvalue_expr) %>% filter(pvalue_prot < strong_IV_cutoff) %>% pull(geneSymbol)
+genes_metab = group_by(xQTL_cis, geneSymbol) %>% slice_min(order_by = pvalue_expr) %>% filter(pvalue_metab < strong_IV_cutoff) %>% pull(geneSymbol)
+genes_any_modality = Reduce(union, list(genes_expr, genes_prot, genes_metab))
+length(intersect(agora_gene_list$hgnc_symbol, genes_any_modality))
+result_matrix_in_agora = result_matrix[intersect(agora_gene_list$hgnc_symbol, genes_any_modality), ]
+```
+
+```{r manhattan_plot_agora}
+# chromosome length -- See https://msmith.de/2019/06/05/chrom-lengths-in-bioc.html
+chrom_length_file = file.path(real_data_dir, "analysis_using_meta_eQTL/chrom_length_grch37_ensembl.csv")
+if (!file.exists(chrom_length_file)) {
+  chrom_length = getChromInfoFromBiomart(biomart="ENSEMBL_MART_ENSEMBL",
+                        host="grch37.ensembl.org",
+                        dataset="hsapiens_gene_ensembl") %>%
+    dplyr::arrange(chrom)
+  write.csv(chrom_length, file = chrom_length_file)
+} else {
+  chrom_length = read.csv(file = chrom_length_file)
+}
+  
+genes = rownames(result_matrix_in_agora)
+
+# Manhattan plots
+# See https://www.r-graph-gallery.com/101_Manhattan_plot.html
+# library(qqman)
+results_with_coords = merge(xQTL_cis, result_matrix_in_agora, 
+                            by.x = "geneSymbol", by.y = 0, all.x = FALSE, all.y = TRUE)
+results_with_coords = results_with_coords[!duplicated(results_with_coords$geneSymbol), ]
+results_with_coords = merge(results_with_coords, chrom_length, 
+                            by.x = "chromosome", by.y = "chrom", all.x = TRUE, all.y = FALSE)
+results_with_coords = results_with_coords[!duplicated(results_with_coords$geneSymbol), ]
+
+results_with_coords$chr = results_with_coords$chromosome
+results_with_coords$BP = results_with_coords$snpLocation
+
+# pvalues before combination of modalities
+results_with_coords$expression = results_with_coords$WGLR_Modality1
+results_with_coords$protein = results_with_coords$WGLR_Modality2
+results_with_coords$metabolite = results_with_coords$WGLR_Modality3
+results_with_coords_long = pivot_longer(results_with_coords,
+                                        cols=c("expression", "protein", "metabolite"),
+                                        names_to = "modality", 
+                                        values_to = "WGLR")
+
+results_with_coords_for_plot = results_with_coords
+results_with_coords_long_for_plot = results_with_coords_long
+
+
+# Fisher
+for (chr in 1:22) {
+  # set -log10(p) to -1 to hide the boundaries:
+  results_with_coords_for_plot = results_with_coords_for_plot %>%
+    add_row(chr = chr, BP = 1, WGLR_Fisher_gamma = 10) %>%
+    add_row(chr = chr, BP = chrom_length$length[chrom_length$chrom == chr], WGLR_Fisher_gamma = 10)
+  results_with_coords_long_for_plot = results_with_coords_long_for_plot %>%
+    add_row(chr = chr, BP = 1, WGLR_Fisher_gamma = 10) %>%
+    add_row(chr = chr, BP = chrom_length$length[chrom_length$chrom == chr], WGLR_Fisher_gamma = 10)
+}
+
+# using ggplot2 instead; see  https://www.r-graph-gallery.com/101_Manhattan_plot.html
+results_with_coords_for_ggplot = results_with_coords
+for (chr in 1:22) {
+  # set -log10(p) to -1 to hide the boundaries:
+  results_with_coords_for_ggplot = results_with_coords_for_ggplot %>% add_row(chr = chr, BP = 0, WGLR_Fisher_gamma = NA)
+}
+don = chrom_length %>% as_tibble() %>%
+  # Compute chromosome size
+  filter(chrom %in% 1:22) %>%
+  dplyr::mutate(chr = as.numeric(chrom)) %>%
+  arrange(chr) %>%
+  # Calculate cumulative position of each chromosome
+  mutate(tot=cumsum(as.numeric(length))-length) %>%
+  dplyr::select(chr, tot) %>%
+  # Add this info to the initial dataset
+  left_join(results_with_coords_for_ggplot, ., by=c("chr"="chr")) %>%
+  # Add a cumulative position of each SNP
+  arrange(chr, BP) %>%
+  mutate(BPcum=BP+tot)
+
+don$gene_ranked = don$geneSymbol
+don$gene_ranked[rank(don$WGLR_Fisher_gamma) > 5] = ""
+don$is_gene_significant = don$WGLR_Fisher_gamma < 0.05/length(genes)
+
+axisdf = don %>% group_by(chr) %>% summarize(center=( max(BPcum) + min(BPcum) ) / 2 )
+
+p1 = ggplot(don, aes(x=BPcum, y=-log10(WGLR_Fisher_gamma), shape=is_gene_significant, label=gene_ranked)) +
+    # Show all points (color according to chr)
+    #geom_point( aes(color=as.factor(chr)), alpha=0.8, size=1.3) +
+    #scale_color_manual(values = rep(c("grey", "skyblue"), 22 )) +
+    # Show all points (color according to omic modality)
+    geom_point(alpha=0.8, size=1.3) +
+    scale_shape_manual(values=c(16, 8)) +
+    geom_text_repel() +
+    geom_hline(yintercept=-log10(0.05/length(genes)), color="red") +
+    # custom X axis:
+    scale_x_continuous( label = axisdf$chr, breaks= axisdf$center ) +
+    xlab("Genomic Location") +
+    ylab("-log10(WGLR Fisher)") +
+    #scale_y_continuous(expand = c(0, 0), limits = c(0, 4)) +     # remove space between plot area and x axis
+    # Custom the theme:
+    guides(shape=FALSE) +
+    theme_bw() +
+    theme( 
+      legend.position="none",
+      panel.border = element_blank(),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank()
+    )
+
+
+# Cauchy
+for (chr in 1:22) {
+  # set -log10(p) to -1 to hide the boundaries:
+  results_with_coords_for_plot = results_with_coords_for_plot %>%
+    add_row(chr = chr, BP = 1, WGLR_Cauchy_cauchy = 10) %>%
+    add_row(chr = chr, BP = chrom_length$length[chrom_length$chrom == chr], WGLR_Cauchy_cauchy = 10)
+  results_with_coords_long_for_plot = results_with_coords_long_for_plot %>%
+    add_row(chr = chr, BP = 1, WGLR_Cauchy_cauchy = 10) %>%
+    add_row(chr = chr, BP = chrom_length$length[chrom_length$chrom == chr], WGLR_Cauchy_cauchy = 10)
+}
+
+# using ggplot2 instead; see  https://www.r-graph-gallery.com/101_Manhattan_plot.html
+results_with_coords_for_ggplot = results_with_coords
+for (chr in 1:22) {
+  # set -log10(p) to -1 to hide the boundaries:
+  results_with_coords_for_ggplot = results_with_coords_for_ggplot %>% add_row(chr = chr, BP = 0, WGLR_Cauchy_cauchy = NA)
+}
+don = chrom_length %>% as_tibble() %>%
+  # Compute chromosome size
+  filter(chrom %in% 1:22) %>%
+  dplyr::mutate(chr = as.numeric(chrom)) %>%
+  arrange(chr) %>%
+  # Calculate cumulative position of each chromosome
+  mutate(tot=cumsum(as.numeric(length))-length) %>%
+  dplyr::select(chr, tot) %>%
+  # Add this info to the initial dataset
+  left_join(results_with_coords_for_ggplot, ., by=c("chr"="chr")) %>%
+  # Add a cumulative position of each SNP
+  arrange(chr, BP) %>%
+  mutate(BPcum=BP+tot)
+
+don$gene_ranked = don$geneSymbol
+don$gene_ranked[rank(don$WGLR_Cauchy_cauchy) > 5] = ""
+don$is_gene_significant = don$WGLR_Cauchy_cauchy < 0.05/length(genes)
+
+axisdf = don %>% group_by(chr) %>% summarize(center=( max(BPcum) + min(BPcum) ) / 2 )
+
+p2 = ggplot(don, aes(x=BPcum, y=-log10(WGLR_Cauchy_cauchy), shape=is_gene_significant, label=gene_ranked)) +
+    # Show all points (color according to chr)
+    #geom_point( aes(color=as.factor(chr)), alpha=0.8, size=1.3) +
+    #scale_color_manual(values = rep(c("grey", "skyblue"), 22 )) +
+    # Show all points (color according to omic modality)
+    geom_point(alpha=0.8, size=1.3) +
+    scale_shape_manual(values=c(16, 8))+
+    geom_text_repel() +
+    geom_hline(yintercept=-log10(0.05/length(genes)), color="red") +
+    # custom X axis:
+    scale_x_continuous( label = axisdf$chr, breaks= axisdf$center ) +
+    xlab("Genomic Location") +
+    ylab("-log10(WGLR Cauchy)") +
+    #scale_y_continuous(expand = c(0, 0), limits = c(0, 4)) +     # remove space between plot area and x axis
+    # Custom the theme:
+    guides(shape=FALSE) +
+    theme_bw() +
+    theme( 
+      legend.position="none",
+      panel.border = element_blank(),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank()
+    )
+
+
+# using no combination function
+# using ggplot2 instead; see  https://www.r-graph-gallery.com/101_Manhattan_plot.html
+results_with_coords_long_for_ggplot = results_with_coords_long
+for (chr in 1:22) {
+  # set -log10(p) to -1 to hide the boundaries:
+  results_with_coords_long_for_ggplot = results_with_coords_long_for_ggplot %>% add_row(chr = chr, BP = 0, WGLR = NA)
+}
+don = chrom_length %>% as_tibble() %>%
+  # Compute chromosome size
+  filter(chrom %in% 1:22) %>%
+  dplyr::mutate(chr = as.numeric(chrom)) %>%
+  arrange(chr) %>%
+  # Calculate cumulative position of each chromosome
+  mutate(tot=cumsum(as.numeric(length))-length) %>%
+  dplyr::select(chr, tot) %>%
+  # Add this info to the initial dataset
+  left_join(results_with_coords_long_for_ggplot, ., by=c("chr"="chr")) %>%
+  # Add a cumulative position of each SNP
+  arrange(chr, BP) %>%
+  mutate(BPcum=BP+tot)
+don$gene_ranked = don$geneSymbol
+don$gene_ranked[rank(don$WGLR) >= 5] = ""
+don$is_gene_significant = don$WGLR < 0.05/length(genes)
+
+axisdf = don %>% group_by(chr) %>% summarize(center=( max(BPcum) + min(BPcum) ) / 2 )
+p3 = ggplot(don, aes(x=BPcum, y=-log10(WGLR), shape=is_gene_significant, label=gene_ranked)) +
+    # Show all points (color according to chr)
+    #geom_point( aes(color=as.factor(chr)), alpha=0.8, size=1.3) +
+    #scale_color_manual(values = rep(c("grey", "skyblue"), 22 )) +
+    # Show all points (color according to omic modality)
+    geom_point( aes(color=modality), alpha=0.8, size=1.3) +
+    scale_shape_manual(values=c(16, 8)) +
+    geom_text_repel() +
+    scale_color_manual(values = wes_palette("FantasticFox1"), na.translate = FALSE) +
+    geom_hline(yintercept=-log10(0.05/length(genes)/3), color="red") +
+    # custom X axis:
+    scale_x_continuous( label = axisdf$chr, breaks= axisdf$center ) +
+    xlab("Genomic Location") +
+    ylab("-log10(WGLR)") +
+    #scale_y_continuous(expand = c(0, 0), limits = c(0, 4)) +     # remove space between plot area and x axis
+    # Custom the theme:
+    guides(shape=FALSE) +
+    theme_bw() +
+    theme(
+      #legend.position="none",
+      panel.border = element_blank(),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank()
+    )
+
+# show top combined p-values
+results_with_coords %>% as_tibble() %>%
+  arrange(WGLR_Cauchy_cauchy) %>%
+  dplyr::select(geneSymbol, WGLR_Fisher_gamma)
+
+#  show p-values before combination
+results_with_coords_long %>% as_tibble() %>%
+  arrange(WGLR) %>%
+  dplyr::select(geneSymbol, WGLR, modality) %>%
+  mutate(pval_SMR_adjusted_for_3_modalties = WGLR * 3)
+
+dir.create(file.path(real_data_dir, "figures"), recursive = TRUE, showWarnings = FALSE)
+pdf(file.path(real_data_dir, "figures/manhattan_plot.pdf"), width=7, height=5.5, onefile=FALSE)
+suppressWarnings(ggarrange(p3, p2, p1, nrow=3, common.legend = TRUE, legend = "right"))
+dev.off()
+suppressWarnings(ggarrange(p3, p2, p1, nrow=3, common.legend = TRUE, legend = "right"))
+```
+
+Real data analysis results when combining summary MR results based on
+Alzheimer's disease GWAS and
+eQTL, pQTL, and metabQTL studies. Each point represents a gene (41 in total) that
+can be mapped in all of the three QTL studies and appear in the 574 Nominated Targets
+in the Agora database.
+The horizontal line represents the cutoff of a significance level of 0.05
+after adjusting for multiple comparisons using Bonferroni method.
+
+
+```{r mr_plot_agora, eval=FALSE, include=FALSE}
+example_gene_name = "ABCA7"
+xQTL_example_gene = xQTL_cis[xQTL_cis$geneSymbol == example_gene_name, ]
+mr_plot(mr_input(bx = xQTL_example_gene$beta_expr, bxse = xQTL_example_gene$beta_expr / xQTL_example_gene$statistic_expr,
+                 by = xQTL_example_gene$beta_GWAS, byse = xQTL_example_gene$beta_GWAS / xQTL_example_gene$statistic_GWAS))
+mr_plot(mr_input(bx = xQTL_example_gene$beta_prot, bxse = xQTL_example_gene$beta_prot / xQTL_example_gene$statistic_prot,
+                 by = xQTL_example_gene$beta_GWAS, byse = xQTL_example_gene$beta_GWAS / xQTL_example_gene$statistic_GWAS))
+mr_plot(mr_input(bx = xQTL_example_gene$beta_metab, bxse = xQTL_example_gene$beta_metab / xQTL_example_gene$statistic_metab,
+                 by = xQTL_example_gene$beta_GWAS, byse = xQTL_example_gene$beta_GWAS / xQTL_example_gene$statistic_GWAS))
+```
+
+
+
+```{r corr_SMR, include=FALSE, eval=FALSE}
+# correlation between z scores when the two underlying xQTLs are independent
+set.seed(1234)
+n_z = 10000000
+z = rnorm(n_z)
+z1 = rnorm(n_z)
+z2 = rnorm(n_z)
+# the covariance between SMR when z1 and z2 are independent (not likely even when z1 and z2 come from different studies):
+# 0.194
+cov(-2*pchisq((z^(2)*z1^(2))/(z^(2)+z1^(2)), df = 1, lower.tail = FALSE, log.p = TRUE),
+    -2*pchisq((z^(2)*z2^(2))/(z^(2)+z2^(2)), df = 1, lower.tail = FALSE, log.p = TRUE))
+cor(z*z1/sqrt(z^(2)+z1^(2)), z*z2/sqrt(z^(2)+z2^(2)))
+
+# could the two underlying xQTLs be independent if they come from different samples?
+# one sample, w/ effect
+set.seed(1234)
+n_X = 1000
+X2 = X1 = rbinom(prob=0.4, size=2, n_X)  # genotype -- one sample
+Y1 = X1 + 0.5*rnorm(n_X)  # xQTL modality 1
+Y2 = X2 + 0.5*rnorm(n_X)  # xQTL modality 2
+n_times = 1000
+Z1 = Z2 = rep(NA, n_times)
+for (i in seq_len(n_times)) {
+  subset = sample(n_X, replace=TRUE)
+  Z1[i] = coefficients(summary(lm(Y1 ~ X1, subset = subset)))['X1', 't value']
+  Z2[i] = coefficients(summary(lm(Y2 ~ X2, subset = subset)))['X2', 't value']
+}
+cor(Z1, Z2)
+plot(Z1, Z2)
+
+# two sample, w/ effect
+Z_genomewide_significance = qnorm(5*(10)^(-8)/2, lower.tail = TRUE)
+set.seed(1234)
+n_X = 500
+X1 = rbinom(prob=0.3, size=2, n_X)  # genotype -- two samples
+Y1 = X1 + 0.5*rnorm(n_X)  # xQTL modality 1; strong modality
+X2 = rbinom(prob=0.3, size=2, n_X)
+Y2 = X2 + 0.5*rnorm(n_X)  # xQTL modality 2
+X0 = rbinom(prob=0.3, size=2, n_X)
+Y0 = X0 + 2*rnorm(n_X)  # GWAS
+n_times = 10000
+Z1 = Z2 = Z0 = rep(NA, n_times)
+for (i in seq_len(n_times)) {
+  subset = sample(n_X, replace=TRUE)
+  Z1[i] = coefficients(summary(lm(Y1 ~ X1, subset = subset)))['X1', 't value']
+  Z2[i] = coefficients(summary(lm(Y2 ~ X2, subset = subset)))['X2', 't value']
+  # Z0[i] = coefficients(summary(lm(Y0 ~ X0, subset = subset)))['X0', 't value']
+  Z0[i] = Z_genomewide_significance
+}
+cor(Z1, Z2)
+plot(Z1, Z2)
+# cor(Z0*Z1/sqrt(Z0^(2)+Z1^(2)), Z0*Z2/sqrt(Z0^(2)+Z2^(2)))
+cov(-2*pchisq((Z0^(2)*Z1^(2))/(Z0^(2)+Z1^(2)), df = 1, lower.tail = FALSE, log.p = TRUE),
+    -2*pchisq((Z0^(2)*Z2^(2))/(Z0^(2)+Z2^(2)), df = 1, lower.tail = FALSE, log.p = TRUE))
+# 0.3395376
+
+## simulate the Null distribution -- SMR
+n_X = 500
+n_times = 1000
+Z1_beta = 0
+Z1_se = 2
+Z1 = rnorm(n_times, Z1_beta / Z1_se, sd = 1/sqrt(n_X))
+Z2_beta = 1.8
+Z2_se = 3
+Z2 = rnorm(n_times, Z2_beta / Z2_se, sd = 1/sqrt(n_X))
+Z3_beta = 3.6
+Z3_se = 4
+Z3 = rnorm(n_times, Z3_beta / Z3_se, sd = 1/sqrt(n_X))
+set.seed(1234)
+Z0 = rnorm(n_X)
+SMR1_statistics = (Z0^(2)*Z1^(2))/(Z0^(2)+Z1^(2))
+SMR2_statistics = (Z0^(2)*Z2^(2))/(Z0^(2)+Z2^(2))
+SMR3_statistics = (Z0^(2)*Z3^(2))/(Z0^(2)+Z3^(2))
+SMR1_pval = pchisq(SMR1_statistics, df = 1, lower.tail = FALSE, log.p = FALSE)
+SMR2_pval = pchisq(SMR2_statistics, df = 1, lower.tail = FALSE, log.p = FALSE)
+SMR3_pval = pchisq(SMR3_statistics, df = 1, lower.tail = FALSE, log.p = FALSE)
+sum(cov(cbind(-2*log(SMR1_pval), -2*log(SMR2_pval), -2*log(SMR3_pval))))
+sum(diag(cov(cbind(-2*log(SMR1_pval), -2*log(SMR2_pval), -2*log(SMR3_pval)))))
+
+# With beta estimate and se estimate, how can we approx the distribution of z?
+set.seed(1234)
+n_X = 500
+n_times = 1000
+beta_vec = se_vec = rep(NA, n_times)
+for (i in seq_len(n_times)) {
+  X1 = rbinom(prob=0.3, size=2, n_X)
+  Y1 = X1 + 2*rnorm(n_X)  # xQTL modality 1; strong modality
+  s = summary(lm(Y1 ~ X1))
+  beta_vec[i] = s$coefficients[1,2]
+  se_vec[i] = s$coefficients[2,2]
+}
+hist(beta_vec/se_vec)  # true
+hist(beta_vec[1]/se_vec[1] + rnorm(n_X)/sqrt(n_X))  # approximate
+```
