@@ -1,7 +1,7 @@
 ---
-title: "Reproducible figures in a comparison of summary MR methods for multi-modality omics data"
+title: "Reproducible figures in a comparison of summary MR methods for multi-omics data"
 author: "Chong Jin"
-date: "10/27/2021"
+date: "11/15/2021"
 fontsize: 11pt  # only works for pdf
 geometry: margin=1.5in  # only works for pdf
 output:
@@ -146,6 +146,9 @@ data_all$overlap = sprintf("%s; xQTLs from same sample", data_all$overlap)
 data_all$overlap[!data_all$xQTL_from_one_sample] = "0; separate xQTL samples"
 
 data_long = gather(data_all, "method", "power", Multivariable:SMR_singleSNP_Fisher_chisq, factor_key=TRUE)
+data_long$method = sub("Cauchy_cauchy", "Cauchy", data_long$method)
+data_long$method = sub("WGLR", "GLS", data_long$method)
+data_long$method = sub("MultivariableLD", "MultivariableGLS", data_long$method)
 data_long$effect = factor(data_long$effect)
 data_long$positive_rate = data_long$power
 data_long$positive_rate[data_long$effect == 0] = - data_long$positive_rate[data_long$effect == 0]
@@ -196,7 +199,7 @@ we have binary outcomes.
 We notice that there is no need for us to use t-distribution methods, as using normal distribution
 will control type I error as well.
 
-```{r type_I_error_compare_overlap_and_outcome, fig.dim = c(10, 8.5)}
+```{r type_I_error_compare_overlap_and_outcome, fig.dim = c(12, 8.5)}
 facet_labeller = c(`0; xQTLs from same sample`="overlap=0 btw. xQTL and GWAS samples",
                    `0.5; xQTLs from same sample`="overlap=0.5 btw. xQTL and GWAS samples",
                    `1; xQTLs from same sample`="overlap=1 btw. xQTL and GWAS samples",
@@ -210,7 +213,7 @@ facet_labeller = c(`0; xQTLs from same sample`="overlap=0 btw. xQTL and GWAS sam
                    `horizontal`="horizontal pleiotropy",
                    `vertical`="vertical pleiotropy"
                    )
-pdf(file.path(real_data_dir, "figures/simulation_type_I_error_overlap_and_outcome.pdf"), width=10, height=8.5)
+pdf(file.path(real_data_dir, "figures/simulation_type_I_error_overlap_and_outcome.pdf"), width=12, height=8.5)
 p = ggplot(subset(data_long_type_I_error,
                   !grepl("^IVW|^Multivariable$|^Multivariable_tdist$", method) &
                   !grepl("MinP|Fisher_chisq", method) &
@@ -255,6 +258,8 @@ Groups: methods (excluded: Fisher_chisq or MinP, SMR, GSMR, t-distribution, one 
 
 Each point for a simulation scenario
 
+Either outcome type = binary_use_control_in_xQTL or overlap: 0; xQTLs from same sample
+
 Color by number of SNPs as instrumental variables (5 or 20)
 
 Conclusion: when R2 is high, methods not adjusting for R2 are invalid.
@@ -267,10 +272,10 @@ data_long_type_I_error_LD = data_long_type_I_error_LD[-grep("Fisher", data_long_
 data_long_type_I_error_LD$correct_for_LD = "Correct for LD"
 uncorrected_status = "Ignore LD"
 Multivariable_rows = which(data_long_type_I_error_LD$method == "Multivariable")
-# data_long_type_I_error_LD[Multivariable_rows, c("method", "correct_for_LD")] = rep(c("MultivariableLD", uncorrected_status), each = length(Multivariable_rows))
+# data_long_type_I_error_LD[Multivariable_rows, c("method", "correct_for_LD")] = rep(c("MultivariableGLS", uncorrected_status), each = length(Multivariable_rows))
 data_long_type_I_error_LD[Multivariable_rows, c("correct_for_LD")] = rep(c(uncorrected_status), each = length(Multivariable_rows))
 IVW_rows = grep("IVW", data_long_type_I_error_LD$method)
-# data_long_type_I_error_LD[IVW_rows, c("method", "correct_for_LD")] = c(sub("IVW", "WGLR", data_long_type_I_error_LD$method[IVW_rows]), rep(uncorrected_status, length(IVW_rows)))
+# data_long_type_I_error_LD[IVW_rows, c("method", "correct_for_LD")] = c(sub("IVW", "GLS", data_long_type_I_error_LD$method[IVW_rows]), rep(uncorrected_status, length(IVW_rows)))
 data_long_type_I_error_LD[IVW_rows, c("correct_for_LD")] = c(rep(uncorrected_status, length(IVW_rows)))
 p = ggplot(subset(data_long_type_I_error_LD,
                   !grepl("MinP|Fisher_chisq", method) &
@@ -280,7 +285,7 @@ p = ggplot(subset(data_long_type_I_error_LD,
                   !grepl("separate xQTL sample", overlap) &
                   (grepl("0; xQTLs from same sample", overlap) |
                    grepl("binary_use_control_in_xQTL", outcome)))  %>%
-           mutate(method = fct_relevel(method, "Multivariable", "MultivariableLD", "IVW_Cauchy_cauchy", "WGLR_Cauchy_cauchy", "IVW_HMP", "WGLR_HMP")),
+           mutate(method = fct_relevel(method, "Multivariable", "MultivariableGLS", "IVW_Cauchy", "GLS_Cauchy", "IVW_HMP", "GLS_HMP")),
            aes(x=method, y=power, fill=method)) +
     # geom_boxplot() +
     scale_color_manual(values = wes_palette("GrandBudapest1")) +
@@ -312,29 +317,26 @@ p
 
 ## Compare p-value combination methods (type I error)
 
-Columns: WGLR_Cauchy_cauchy, WGLR_HMP, WGLR_Fisher_gamma,
-         WGLR_Fisher_chisq, WGLR_MinP
+Columns: GLS_Cauchy, GLS_HMP, GLS_Fisher_gamma,
+         GLS_Fisher_chisq, GLS_MinP
 
 Rows: combine them all together using jittered points
 (or Horizontal/vertical, IV strength)
 
-outcome type = binary_use_all_in_xQTL, r2 = 0.2
-overlap: 0; xQTLs from same sample
+Either outcome type = binary_use_control_in_xQTL or overlap: 0; xQTLs from same sample
 
 Exclude simulation settings not valid because of overlap and outcome combinations
 and methods not valid because not accounting for R2
 
-The figure in the main text corresponds to number of SNPs = 20.
-
 Conclusion:  Cauchy, HMP, and Fisher_gamma will control type I error while Fisher_chisq and MinP will not control type I error.
 
-```{r type_I_error_compare_pval_combination, fig.dim = c(6, 8)}
+```{r type_I_error_compare_pval_combination, fig.dim = c(9, 6)}
 p = ggplot(subset(data_long_type_I_error,
-                   grepl("WGLR_Fisher_gamma|WGLR_Cauchy_cauchy|GSMR_Cauchy_cauchy|SMR_allSNPs_Cauchy_cauchy|SMR_singleSNP_Cauchy_cauchy|WGLR_HMP|SMR_allSNPs_HMP|SMR_singleSNP_HMP|WGLR_Fisher_chisq|GSMR_Fisher_chisq|SMR_allSNPs_Fisher_chisq|SMR_singleSNP_Fisher_chisq|WGLR_MinP|GSMR_MinP", method) &
+                   grepl("Multivariable$|MultivariableGLS$|GLS_Fisher_gamma|IVW_Cauchy|GLS_Cauchy|GSMR_Cauchy|SMR_allSNPs_Cauchy|SMR_singleSNP_Cauchy|IVW_HMP|GLS_HMP|GSMR_HMP|SMR_allSNPs_HMP|SMR_singleSNP_HMP|GLS_Fisher_chisq|GSMR_Fisher_chisq|SMR_allSNPs_Fisher_chisq|SMR_singleSNP_Fisher_chisq|GLS_MinP|GSMR_MinP", method) &
                   !grepl("separate xQTL sample", overlap) &
                   (grepl("0; xQTLs from same sample", overlap) |
                    grepl("binary_use_control_in_xQTL", outcome))) %>%
-           mutate(method = fct_relevel(method,  "WGLR_Fisher_gamma", "WGLR_Cauchy_cauchy", "GSMR_Cauchy_cauchy", "SMR_allSNPs_Cauchy_cauchy", "SMR_singleSNP_Cauchy_cauchy", "WGLR_HMP", "SMR_allSNPs_HMP", "SMR_singleSNP_HMP", "WGLR_Fisher_chisq", "GSMR_Fisher_chisq", "SMR_allSNPs_Fisher_chisq", "SMR_singleSNP_Fisher_chisq", "WGLR_MinP", "GSMR_MinP")),
+           mutate(method = fct_relevel(method,  "Multivariable", "MultivariableGLS", "GLS_Fisher_gamma", "IVW_Cauchy", "GLS_Cauchy", "GSMR_Cauchy", "SMR_allSNPs_Cauchy", "SMR_singleSNP_Cauchy", "IVW_HMP", "GLS_HMP", "GSMR_HMP", "SMR_allSNPs_HMP", "SMR_singleSNP_HMP", "GLS_Fisher_chisq", "GSMR_Fisher_chisq", "SMR_allSNPs_Fisher_chisq", "SMR_singleSNP_Fisher_chisq", "GLS_MinP", "GSMR_MinP")),
            aes(x=method, y=power, fill=method)) +
     # geom_boxplot() +
     scale_color_manual(values = wes_palette("BottleRocket2")) +
@@ -358,7 +360,7 @@ p = ggplot(subset(data_long_type_I_error,
     geom_hline(yintercept=0.05, color="red") + 
     xlab("") + 
     ylab("Type I error")
-pdf(file.path(real_data_dir, "figures/simulation_type_I_error_pval_combination.pdf"), width=6, height=8)
+pdf(file.path(real_data_dir, "figures/simulation_type_I_error_pval_combination.pdf"), width=9, height=6)
 p
 dev.off()
 p
@@ -366,36 +368,37 @@ p
 
 ## Compare p-value combination methods (power)
 
-Columns: MultivariableLD, WGLR_Fisher_gamma, WGLR_Cauchy_cauchy, WGLR_HMP,
-         GSMR_Cauchy_cauchy, GSMR_HMP, 
-         SMR_allSNPs_Cauchy_cauchy, SMR_allSNPs_HMP, 
-         SMR_singleSNP_Cauchy_cauchy, SMR_singleSNP_HMP
+Columns: MultivariableGLS, GLS_Fisher_gamma, GLS_Cauchy, GLS_HMP,
+         GSMR_Cauchy, GSMR_HMP, 
+         SMR_allSNPs_Cauchy, SMR_allSNPs_HMP, 
+         SMR_singleSNP_Cauchy, SMR_singleSNP_HMP
 
-Rows: Horizontal/vertical, IV strength
+Rows: Horizontal/vertical
+
+Grouped bars: IV strength
 
 outcome type = binary_use_all_in_xQTL, r2 = 0.2
 overlap: 0; xQTLs from same sample
-Number of number_of_SNPs_to_show == 5
 
 The figure in the main text corresponds to number of SNPs = 5.
 
-Conclusion: WGLR_Fisher_gamma and WGLR_Cauchy_cauchy are powerful. GSMR_Cauchy_cauchy is about
+Conclusion: GLS_Fisher_gamma and GLS_Cauchy are powerful. GSMR_Cauchy is about
 as powerful when the IVs are strong but is less powerful with weak IVs.
 
 ```{r power_compare_pval_combination, fig.dim = c(5, 6)}
 rtwo = 0.2
 data_long_power_subset = subset(data_long_power,
-                   grepl("^MultivariableLD$|WGLR_Fisher_gamma|WGLR_Cauchy_cauchy|WGLR_HMP|GSMR_Cauchy_cauchy|GSMR_HMP|SMR_allSNPs_Cauchy_cauchy|SMR_allSNPs_HMP|SMR_singleSNP_Cauchy_cauchy|SMR_singleSNP_HMP", method) &
+                   grepl("^MultivariableGLS$|GLS_Fisher_gamma|GLS_Cauchy|GLS_HMP|GSMR_Cauchy|GSMR_HMP|SMR_allSNPs_Cauchy|SMR_allSNPs_HMP|SMR_singleSNP_Cauchy|SMR_singleSNP_HMP", method) &
                    grepl("0; xQTLs from same sample", overlap) &
                    grepl("binary_use_all_in_xQTL", outcome) &
                    r2 == rtwo) %>%
-  mutate(method = fct_relevel(method, "MultivariableLD", "WGLR_Fisher_gamma", "WGLR_Cauchy_cauchy", "WGLR_HMP", "GSMR_Cauchy_cauchy", "GSMR_HMP", "SMR_allSNPs_Cauchy_cauchy", "SMR_allSNPs_HMP", "SMR_singleSNP_Cauchy_cauchy", "SMR_singleSNP_HMP"))
+  mutate(method = fct_relevel(method, "MultivariableGLS", "GLS_Fisher_gamma", "GLS_Cauchy", "GSMR_Cauchy", "SMR_allSNPs_Cauchy", "SMR_singleSNP_Cauchy", "GLS_HMP", "GSMR_HMP",  "SMR_allSNPs_HMP", "SMR_singleSNP_HMP"))
 data_long_type_I_error_subset = subset(data_long_type_I_error,
-                   grepl("^MultivariableLD$|WGLR_Fisher_gamma|WGLR_Cauchy_cauchy|WGLR_HMP|GSMR_Cauchy_cauchy|GSMR_HMP|SMR_allSNPs_Cauchy_cauchy|SMR_allSNPs_HMP|SMR_singleSNP_Cauchy_cauchy|SMR_singleSNP_HMP", method) &
+                   grepl("^MultivariableGLS$|GLS_Fisher_gamma|GLS_Cauchy|GLS_HMP|GSMR_Cauchy|GSMR_HMP|SMR_allSNPs_Cauchy|SMR_allSNPs_HMP|SMR_singleSNP_Cauchy|SMR_singleSNP_HMP", method) &
                    grepl("0; xQTLs from same sample", overlap) &
                    grepl("binary_use_all_in_xQTL", outcome) &
                    r2 == rtwo) %>%
-  mutate(method = fct_relevel(method, "MultivariableLD", "WGLR_Fisher_gamma", "WGLR_Cauchy_cauchy", "WGLR_HMP", "GSMR_Cauchy_cauchy", "GSMR_HMP", "SMR_allSNPs_Cauchy_cauchy", "SMR_allSNPs_HMP", "SMR_singleSNP_Cauchy_cauchy", "SMR_singleSNP_HMP"))
+  mutate(method = fct_relevel(method, "MultivariableGLS", "GLS_Fisher_gamma", "GLS_Cauchy", "GSMR_Cauchy", "SMR_allSNPs_Cauchy", "SMR_singleSNP_Cauchy", "GLS_HMP", "GSMR_HMP",  "SMR_allSNPs_HMP", "SMR_singleSNP_HMP"))
 p = ggplot(data_long_power_subset,
            aes(x=method, y=power, fill=as_factor(IV_strength))) +
         geom_bar(position="dodge", stat="identity") +
@@ -513,7 +516,7 @@ p
 
 <!-- Then we check the power: -->
 
-<!-- 1. When using multiple SNPs, including MultivariableLD method, and different p-value combination methods; -->
+<!-- 1. When using multiple SNPs, including MultivariableGLS method, and different p-value combination methods; -->
 
 <!-- 2. When using one SNP and different p-value combination methods; -->
 
@@ -567,13 +570,13 @@ From the figure we can know:
 
 1. HMP always has lower power than Cauchy. Thus we will prefer to use Cauchy combination method.
 
-2. WGLR is the most powerful method when the instrumental variables are weak, and GSMR is the most powerful method when the instrumental variables are strong.
+2. GLS is the most powerful method when the instrumental variables are weak, and GSMR is the most powerful method when the instrumental variables are strong.
 
-3. The SMR methods are less powerful than WGLR and GSMR which model the LD disequilibrium. On whether or not to combine multiple SNPs using Cauchy combination method, it is advisable to use SMR from one single SNP when the instrumental variables are weak, and combine SMR statistics from multiple SNPs using Cauchy combination method when the instrumental variables are strong.
+3. The SMR methods are less powerful than GLS and GSMR which model the LD disequilibrium. On whether or not to combine multiple SNPs using Cauchy combination method, it is advisable to use SMR from one single SNP when the instrumental variables are weak, and combine SMR statistics from multiple SNPs using Cauchy combination method when the instrumental variables are strong.
 
 In real data, we know that the instrumental variables are very weak. 
-MultivariableLD and GSMR will not provide an answer for most of the genes in the real data analysis.
-So we mainly show the results of WGLR_Cauchy_cauchy in the real data analysis.
+MultivariableGLS and GSMR will not provide an answer for most of the genes in the real data analysis.
+So we mainly show the results of GLS_Cauchy in the real data analysis.
 
 # Real data analysis
 
@@ -644,6 +647,9 @@ result_list = pblapply(genes, function (gene) {
 })
 result_matrix = do.call("rbind", result_list)
 rownames(result_matrix) = genes
+colnames(result_matrix) = sub("Cauchy_cauchy", "Cauchy", colnames(result_matrix))
+colnames(result_matrix) = sub("WGLR", "GLS", colnames(result_matrix))
+colnames(result_matrix) = sub("MultivariableLD", "MultivariableGLS", colnames(result_matrix))
 ```
 
 ```{r agora_gene_list}
@@ -667,7 +673,7 @@ length(intersect(agora_gene_list$hgnc_symbol, genes_any_modality))
 result_matrix_in_agora = result_matrix[intersect(agora_gene_list$hgnc_symbol, genes_any_modality), ]
 ```
 
-```{r manhattan_plot_agora}
+```{r manhattan_plot_agora, fig.dim=c(9, 6)}
 # chromosome length -- See https://msmith.de/2019/06/05/chrom-lengths-in-bioc.html
 chrom_length_file = file.path(real_data_dir, "analysis_using_meta_eQTL/chrom_length_grch37_ensembl.csv")
 if (!file.exists(chrom_length_file)) {
@@ -696,13 +702,13 @@ results_with_coords$chr = results_with_coords$chromosome
 results_with_coords$BP = results_with_coords$snpLocation
 
 # pvalues before combination of modalities
-results_with_coords$expression = results_with_coords$WGLR_Modality1
-results_with_coords$protein = results_with_coords$WGLR_Modality2
-results_with_coords$metabolite = results_with_coords$WGLR_Modality3
+results_with_coords$expression = results_with_coords$GLS_Modality1
+results_with_coords$protein = results_with_coords$GLS_Modality2
+results_with_coords$metabolite = results_with_coords$GLS_Modality3
 results_with_coords_long = pivot_longer(results_with_coords,
                                         cols=c("expression", "protein", "metabolite"),
                                         names_to = "modality", 
-                                        values_to = "WGLR")
+                                        values_to = "GLS")
 
 results_with_coords_for_plot = results_with_coords
 results_with_coords_long_for_plot = results_with_coords_long
@@ -712,18 +718,20 @@ results_with_coords_long_for_plot = results_with_coords_long
 for (chr in 1:22) {
   # set -log10(p) to -1 to hide the boundaries:
   results_with_coords_for_plot = results_with_coords_for_plot %>%
-    add_row(chr = chr, BP = 1, WGLR_Fisher_gamma = 10) %>%
-    add_row(chr = chr, BP = chrom_length$length[chrom_length$chrom == chr], WGLR_Fisher_gamma = 10)
+    add_row(chr = chr, BP = 1, GLS_Fisher_gamma = 10) %>%
+    add_row(chr = chr, BP = chrom_length$length[chrom_length$chrom == chr], GLS_Fisher_gamma = 10)
   results_with_coords_long_for_plot = results_with_coords_long_for_plot %>%
-    add_row(chr = chr, BP = 1, WGLR_Fisher_gamma = 10) %>%
-    add_row(chr = chr, BP = chrom_length$length[chrom_length$chrom == chr], WGLR_Fisher_gamma = 10)
+    add_row(chr = chr, BP = 1, GLS_Fisher_gamma = 10) %>%
+    add_row(chr = chr, BP = chrom_length$length[chrom_length$chrom == chr], GLS_Fisher_gamma = 10)
 }
 
 # using ggplot2 instead; see  https://www.r-graph-gallery.com/101_Manhattan_plot.html
 results_with_coords_for_ggplot = results_with_coords
 for (chr in 1:22) {
   # set -log10(p) to -1 to hide the boundaries:
-  results_with_coords_for_ggplot = results_with_coords_for_ggplot %>% add_row(chr = chr, BP = 0, WGLR_Fisher_gamma = NA)
+  results_with_coords_for_ggplot = results_with_coords_for_ggplot %>%
+    add_row(chr = chr, BP = 0, GLS_Fisher_gamma = NA) %>% 
+    add_row(chr = chr, BP = chrom_length$length[chrom_length$chrom == chr], GLS_Fisher_gamma = NA)
 }
 don = chrom_length %>% as_tibble() %>%
   # Compute chromosome size
@@ -740,24 +748,24 @@ don = chrom_length %>% as_tibble() %>%
   mutate(BPcum=BP+tot)
 
 don$gene_ranked = don$geneSymbol
-don$gene_ranked[rank(don$WGLR_Fisher_gamma) > 5] = ""
-don$is_gene_significant = don$WGLR_Fisher_gamma < 0.05/length(genes)
+don$gene_ranked[rank(don$GLS_Fisher_gamma) > 5] = ""
+don$is_gene_significant = don$GLS_Fisher_gamma < 0.05/length(genes)
 
 axisdf = don %>% group_by(chr) %>% summarize(center=( max(BPcum) + min(BPcum) ) / 2 )
 
-p1 = ggplot(don, aes(x=BPcum, y=-log10(WGLR_Fisher_gamma), shape=is_gene_significant, label=gene_ranked)) +
+p1 = ggplot(don, aes(x=BPcum, y=-log10(GLS_Fisher_gamma), shape=is_gene_significant, label=gene_ranked)) +
     # Show all points (color according to chr)
     #geom_point( aes(color=as.factor(chr)), alpha=0.8, size=1.3) +
     #scale_color_manual(values = rep(c("grey", "skyblue"), 22 )) +
     # Show all points (color according to omic modality)
     geom_point(alpha=0.8, size=1.3) +
     scale_shape_manual(values=c(16, 8)) +
-    geom_text_repel() +
+    geom_text_repel(force = 2) +
     geom_hline(yintercept=-log10(0.05/length(genes)), color="red") +
     # custom X axis:
     scale_x_continuous( label = axisdf$chr, breaks= axisdf$center ) +
     xlab("Genomic Location") +
-    ylab("-log10(WGLR Fisher)") +
+    ylab("-log10(GLS Fisher)") +
     #scale_y_continuous(expand = c(0, 0), limits = c(0, 4)) +     # remove space between plot area and x axis
     # Custom the theme:
     guides(shape=FALSE) +
@@ -774,18 +782,20 @@ p1 = ggplot(don, aes(x=BPcum, y=-log10(WGLR_Fisher_gamma), shape=is_gene_signifi
 for (chr in 1:22) {
   # set -log10(p) to -1 to hide the boundaries:
   results_with_coords_for_plot = results_with_coords_for_plot %>%
-    add_row(chr = chr, BP = 1, WGLR_Cauchy_cauchy = 10) %>%
-    add_row(chr = chr, BP = chrom_length$length[chrom_length$chrom == chr], WGLR_Cauchy_cauchy = 10)
+    add_row(chr = chr, BP = 1, GLS_Cauchy = 10) %>%
+    add_row(chr = chr, BP = chrom_length$length[chrom_length$chrom == chr], GLS_Cauchy = 10)
   results_with_coords_long_for_plot = results_with_coords_long_for_plot %>%
-    add_row(chr = chr, BP = 1, WGLR_Cauchy_cauchy = 10) %>%
-    add_row(chr = chr, BP = chrom_length$length[chrom_length$chrom == chr], WGLR_Cauchy_cauchy = 10)
+    add_row(chr = chr, BP = 1, GLS_Cauchy = 10) %>%
+    add_row(chr = chr, BP = chrom_length$length[chrom_length$chrom == chr], GLS_Cauchy = 10)
 }
 
 # using ggplot2 instead; see  https://www.r-graph-gallery.com/101_Manhattan_plot.html
 results_with_coords_for_ggplot = results_with_coords
 for (chr in 1:22) {
   # set -log10(p) to -1 to hide the boundaries:
-  results_with_coords_for_ggplot = results_with_coords_for_ggplot %>% add_row(chr = chr, BP = 0, WGLR_Cauchy_cauchy = NA)
+  results_with_coords_for_ggplot = results_with_coords_for_ggplot %>%
+    add_row(chr = chr, BP = 0, GLS_Cauchy = NA) %>% 
+    add_row(chr = chr, BP = chrom_length$length[chrom_length$chrom == chr], GLS_Cauchy = NA)
 }
 don = chrom_length %>% as_tibble() %>%
   # Compute chromosome size
@@ -802,24 +812,87 @@ don = chrom_length %>% as_tibble() %>%
   mutate(BPcum=BP+tot)
 
 don$gene_ranked = don$geneSymbol
-don$gene_ranked[rank(don$WGLR_Cauchy_cauchy) > 5] = ""
-don$is_gene_significant = don$WGLR_Cauchy_cauchy < 0.05/length(genes)
+don$gene_ranked[rank(don$GLS_Cauchy) > 5] = ""
+don$is_gene_significant = don$GLS_Cauchy < 0.05/length(genes)
 
 axisdf = don %>% group_by(chr) %>% summarize(center=( max(BPcum) + min(BPcum) ) / 2 )
 
-p2 = ggplot(don, aes(x=BPcum, y=-log10(WGLR_Cauchy_cauchy), shape=is_gene_significant, label=gene_ranked)) +
+p2 = ggplot(don, aes(x=BPcum, y=-log10(GLS_Cauchy), shape=is_gene_significant, label=gene_ranked)) +
     # Show all points (color according to chr)
     #geom_point( aes(color=as.factor(chr)), alpha=0.8, size=1.3) +
     #scale_color_manual(values = rep(c("grey", "skyblue"), 22 )) +
     # Show all points (color according to omic modality)
     geom_point(alpha=0.8, size=1.3) +
     scale_shape_manual(values=c(16, 8))+
-    geom_text_repel() +
+    geom_text_repel(force = 2) +
     geom_hline(yintercept=-log10(0.05/length(genes)), color="red") +
     # custom X axis:
     scale_x_continuous( label = axisdf$chr, breaks= axisdf$center ) +
     xlab("Genomic Location") +
-    ylab("-log10(WGLR Cauchy)") +
+    ylab("-log10(GLS Cauchy)") +
+    #scale_y_continuous(expand = c(0, 0), limits = c(0, 4)) +     # remove space between plot area and x axis
+    # Custom the theme:
+    guides(shape=FALSE) +
+    theme_bw() +
+    theme( 
+      legend.position="none",
+      panel.border = element_blank(),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank()
+    )
+
+# GSMR
+for (chr in 1:22) {
+  # set -log10(p) to -1 to hide the boundaries:
+  results_with_coords_for_plot = results_with_coords_for_plot %>%
+    add_row(chr = chr, BP = 1, GSMR_Cauchy = 10) %>%
+    add_row(chr = chr, BP = chrom_length$length[chrom_length$chrom == chr], GSMR_Cauchy = 10)
+  results_with_coords_long_for_plot = results_with_coords_long_for_plot %>%
+    add_row(chr = chr, BP = 1, GSMR_Cauchy = 10) %>%
+    add_row(chr = chr, BP = chrom_length$length[chrom_length$chrom == chr], GSMR_Cauchy = 10)
+}
+
+# using ggplot2 instead; see  https://www.r-graph-gallery.com/101_Manhattan_plot.html
+results_with_coords_for_ggplot = results_with_coords
+for (chr in 1:22) {
+  # set -log10(p) to -1 to hide the boundaries:
+  results_with_coords_for_ggplot = results_with_coords_for_ggplot %>%
+    add_row(chr = chr, BP = 0, GSMR_Cauchy = NA) %>% 
+    add_row(chr = chr, BP = chrom_length$length[chrom_length$chrom == chr], GSMR_Cauchy = NA)
+}
+don = chrom_length %>% as_tibble() %>%
+  # Compute chromosome size
+  filter(chrom %in% 1:22) %>%
+  dplyr::mutate(chr = as.numeric(chrom)) %>%
+  arrange(chr) %>%
+  # Calculate cumulative position of each chromosome
+  mutate(tot=cumsum(as.numeric(length))-length) %>%
+  dplyr::select(chr, tot) %>%
+  # Add this info to the initial dataset
+  left_join(results_with_coords_for_ggplot, ., by=c("chr"="chr")) %>%
+  # Add a cumulative position of each SNP
+  arrange(chr, BP) %>%
+  mutate(BPcum=BP+tot)
+
+don$gene_ranked = don$geneSymbol
+don$gene_ranked[rank(don$GSMR_Cauchy) > 5] = ""
+don$is_gene_significant = don$GSMR_Cauchy < 0.05/length(genes)
+
+axisdf = don %>% group_by(chr) %>% summarize(center=( max(BPcum) + min(BPcum) ) / 2 )
+
+p3 = ggplot(don, aes(x=BPcum, y=-log10(GSMR_Cauchy), shape=is_gene_significant, label=gene_ranked)) +
+    # Show all points (color according to chr)
+    #geom_point( aes(color=as.factor(chr)), alpha=0.8, size=1.3) +
+    #scale_color_manual(values = rep(c("grey", "skyblue"), 22 )) +
+    # Show all points (color according to omic modality)
+    geom_point(alpha=0.8, size=1.3) +
+    scale_shape_manual(values=c(16, 8))+
+    geom_text_repel(force = 2) +
+    geom_hline(yintercept=-log10(0.05/length(genes)), color="red") +
+    # custom X axis:
+    scale_x_continuous( label = axisdf$chr, breaks= axisdf$center ) +
+    xlab("Genomic Location") +
+    ylab("-log10(GSMR Cauchy)") +
     #scale_y_continuous(expand = c(0, 0), limits = c(0, 4)) +     # remove space between plot area and x axis
     # Custom the theme:
     guides(shape=FALSE) +
@@ -832,72 +905,74 @@ p2 = ggplot(don, aes(x=BPcum, y=-log10(WGLR_Cauchy_cauchy), shape=is_gene_signif
     )
 
 
-# using no combination function
-# using ggplot2 instead; see  https://www.r-graph-gallery.com/101_Manhattan_plot.html
-results_with_coords_long_for_ggplot = results_with_coords_long
-for (chr in 1:22) {
-  # set -log10(p) to -1 to hide the boundaries:
-  results_with_coords_long_for_ggplot = results_with_coords_long_for_ggplot %>% add_row(chr = chr, BP = 0, WGLR = NA)
-}
-don = chrom_length %>% as_tibble() %>%
-  # Compute chromosome size
-  filter(chrom %in% 1:22) %>%
-  dplyr::mutate(chr = as.numeric(chrom)) %>%
-  arrange(chr) %>%
-  # Calculate cumulative position of each chromosome
-  mutate(tot=cumsum(as.numeric(length))-length) %>%
-  dplyr::select(chr, tot) %>%
-  # Add this info to the initial dataset
-  left_join(results_with_coords_long_for_ggplot, ., by=c("chr"="chr")) %>%
-  # Add a cumulative position of each SNP
-  arrange(chr, BP) %>%
-  mutate(BPcum=BP+tot)
-don$gene_ranked = don$geneSymbol
-don$gene_ranked[rank(don$WGLR) >= 5] = ""
-don$is_gene_significant = don$WGLR < 0.05/length(genes)
-
-axisdf = don %>% group_by(chr) %>% summarize(center=( max(BPcum) + min(BPcum) ) / 2 )
-p3 = ggplot(don, aes(x=BPcum, y=-log10(WGLR), shape=is_gene_significant, label=gene_ranked)) +
-    # Show all points (color according to chr)
-    #geom_point( aes(color=as.factor(chr)), alpha=0.8, size=1.3) +
-    #scale_color_manual(values = rep(c("grey", "skyblue"), 22 )) +
-    # Show all points (color according to omic modality)
-    geom_point( aes(color=modality), alpha=0.8, size=1.3) +
-    scale_shape_manual(values=c(16, 8)) +
-    geom_text_repel() +
-    scale_color_manual(values = wes_palette("FantasticFox1"), na.translate = FALSE) +
-    geom_hline(yintercept=-log10(0.05/length(genes)/3), color="red") +
-    # custom X axis:
-    scale_x_continuous( label = axisdf$chr, breaks= axisdf$center ) +
-    xlab("Genomic Location") +
-    ylab("-log10(WGLR)") +
-    #scale_y_continuous(expand = c(0, 0), limits = c(0, 4)) +     # remove space between plot area and x axis
-    # Custom the theme:
-    guides(shape=FALSE) +
-    theme_bw() +
-    theme(
-      #legend.position="none",
-      panel.border = element_blank(),
-      panel.grid.major.x = element_blank(),
-      panel.grid.minor.x = element_blank()
-    )
+# # using no combination function
+# # using ggplot2 instead; see  https://www.r-graph-gallery.com/101_Manhattan_plot.html
+# results_with_coords_long_for_ggplot = results_with_coords_long
+# for (chr in 1:22) {
+#   # set -log10(p) to -1 to hide the boundaries:
+#   results_with_coords_long_for_ggplot = results_with_coords_long_for_ggplot %>%
+#     add_row(chr = chr, BP = 0, GLS = NA) %>% 
+#     add_row(chr = chr, BP = chrom_length$length[chrom_length$chrom == chr], GLS = NA)
+# }
+# don = chrom_length %>% as_tibble() %>%
+#   # Compute chromosome size
+#   filter(chrom %in% 1:22) %>%
+#   dplyr::mutate(chr = as.numeric(chrom)) %>%
+#   arrange(chr) %>%
+#   # Calculate cumulative position of each chromosome
+#   mutate(tot=cumsum(as.numeric(length))-length) %>%
+#   dplyr::select(chr, tot) %>%
+#   # Add this info to the initial dataset
+#   left_join(results_with_coords_long_for_ggplot, ., by=c("chr"="chr")) %>%
+#   # Add a cumulative position of each SNP
+#   arrange(chr, BP) %>%
+#   mutate(BPcum=BP+tot)
+# don$gene_ranked = don$geneSymbol
+# don$gene_ranked[rank(don$GLS) >= 5] = ""
+# don$is_gene_significant = don$GLS < 0.05/length(genes)
+# 
+# axisdf = don %>% group_by(chr) %>% summarize(center=( max(BPcum) + min(BPcum) ) / 2 )
+# p3 = ggplot(don, aes(x=BPcum, y=-log10(GLS), shape=is_gene_significant, label=gene_ranked)) +
+#     # Show all points (color according to chr)
+#     #geom_point( aes(color=as.factor(chr)), alpha=0.8, size=1.3) +
+#     #scale_color_manual(values = rep(c("grey", "skyblue"), 22 )) +
+#     # Show all points (color according to omic modality)
+#     geom_point( aes(color=modality), alpha=0.8, size=1.3) +
+#     scale_shape_manual(values=c(16, 8)) +
+#     geom_text_repel(force = 2) +
+#     scale_color_manual(values = wes_palette("FantasticFox1"), na.translate = FALSE) +
+#     geom_hline(yintercept=-log10(0.05/length(genes)/3), color="red") +
+#     # custom X axis:
+#     scale_x_continuous( label = axisdf$chr, breaks= axisdf$center ) +
+#     xlab("Genomic Location") +
+#     ylab("-log10(GLS)") +
+#     #scale_y_continuous(expand = c(0, 0), limits = c(0, 4)) +     # remove space between plot area and x axis
+#     # Custom the theme:
+#     guides(shape=FALSE) +
+#     theme_bw() +
+#     theme(
+#       #legend.position="none",
+#       panel.border = element_blank(),
+#       panel.grid.major.x = element_blank(),
+#       panel.grid.minor.x = element_blank()
+#     )
 
 # show top combined p-values
 results_with_coords %>% as_tibble() %>%
-  arrange(WGLR_Cauchy_cauchy) %>%
-  dplyr::select(geneSymbol, WGLR_Fisher_gamma)
+  arrange(GLS_Cauchy) %>%
+  dplyr::select(geneSymbol, GLS_Fisher_gamma)
 
 #  show p-values before combination
 results_with_coords_long %>% as_tibble() %>%
-  arrange(WGLR) %>%
-  dplyr::select(geneSymbol, WGLR, modality) %>%
-  mutate(pval_SMR_adjusted_for_3_modalties = WGLR * 3)
+  arrange(GLS) %>%
+  dplyr::select(geneSymbol, GLS, modality) %>%
+  mutate(pval_SMR_adjusted_for_3_modalties = GLS * 3)
 
 dir.create(file.path(real_data_dir, "figures"), recursive = TRUE, showWarnings = FALSE)
-pdf(file.path(real_data_dir, "figures/manhattan_plot.pdf"), width=7, height=5.5, onefile=FALSE)
-suppressWarnings(ggarrange(p3, p2, p1, nrow=3, common.legend = TRUE, legend = "right"))
+pdf(file.path(real_data_dir, "figures/manhattan_plot.pdf"), width=9, height=6, onefile=FALSE)
+suppressWarnings(ggarrange(p3, p2, p1, nrow=3, common.legend = TRUE, legend = "bottom"))
 dev.off()
-suppressWarnings(ggarrange(p3, p2, p1, nrow=3, common.legend = TRUE, legend = "right"))
+suppressWarnings(ggarrange(p3, p2, p1, nrow=3, common.legend = TRUE, legend = "bottom"))
 ```
 
 Real data analysis results when combining summary MR results based on
