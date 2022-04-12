@@ -1125,7 +1125,8 @@ suppressWarnings(ggarrange(p3, p2, p1, nrow=3, common.legend = TRUE, legend = "b
 
 # data for Figure 6
 openxlsx::write.xlsx(
-  na.omit(don[, c("chromosome", "geneSymbol", "geneStartPosition", "geneEndPosition", "GSMR_Cauchy", "GLS_Cauchy", "GLS_Fisher_gamma")]),    file.path(figure_data_dir, "figure6.xlsx"),
+  don[!is.na(don$geneSymbol), c("chromosome", "geneSymbol", "geneStartPosition", "geneEndPosition", "GSMR_Cauchy", "GLS_Cauchy", "GLS_Fisher_gamma","MultivariableGLS")],
+  file.path(figure_data_dir, "figure6.xlsx"),
   sheetName = "figure6",
   col.names = TRUE,
   row.names = FALSE,
