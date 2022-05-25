@@ -726,6 +726,115 @@ In real data, we know that the instrumental variables are very weak.
 MultivariableGLS and GSMR will not provide an answer for most of the genes in the real data analysis.
 So we mainly show the results of GLS_Cauchy in the real data analysis.
 
+## When the effect size varies across SNPs
+
+Suppose the effect size of SNPs is between 0 and 2. It equals to two fold of a random variable following a beta distribution with shape1 = 5 and shape2 = 5.
+
+```{r varying_effect_size, fig.dim = c(5, 6)}
+data_all = read.csv(file.path(simulation_dir, "result_beta_dist.csv"))
+
+data_all$overlap = sprintf("%s; xQTLs from same sample", data_all$overlap)
+data_all$overlap[!data_all$xQTL_from_one_sample] = "0; separate xQTL samples"
+
+data_long = gather(data_all, "method", "power", Multivariable:SMR_singleSNP_Fisher_chisq, factor_key=TRUE)
+data_long$method = sub("Cauchy_cauchy", "Cauchy", data_long$method)
+data_long$method = sub("WGLR", "GLS", data_long$method)
+data_long$method = sub("MultivariableLD", "MultivariableGLS", data_long$method)
+data_long$effect = factor(data_long$effect)
+data_long$positive_rate = data_long$power
+data_long$positive_rate[data_long$effect == 0] = - data_long$positive_rate[data_long$effect == 0]
+
+data_long_power = data_long[data_long$effect == 0.1, ]
+data_long_type_I_error = data_long[data_long$effect == 0, ]
+
+all.equal(data_long_power$outcome, data_long_type_I_error$outcome)
+all.equal(data_long_power$pleiotropy, data_long_type_I_error$pleiotropy)
+all.equal(data_long_power$IV_strength, data_long_type_I_error$IV_strength)
+all.equal(data_long_power$overlap, data_long_type_I_error$overlap)
+all.equal(data_long_power$r2, data_long_type_I_error$r2)
+
+data_long_power$type_I_error = data_long_type_I_error$power
+
+# order the barplot by mean type I error
+aggr = aggregate(power ~ method, data=data_long_type_I_error, mean)
+aggr = aggr[order(aggr$power), ]
+data_long$method = factor(data_long$method, levels = rev(levels(aggr$method)))
+method_color = wes_palette(length(levels(data_long$method)),
+                           name = "Darjeeling1", type = "continuous")
+names(method_color) = levels(data_long$method)
+
+rtwo = 0.2
+data_long_power_subset = subset(data_long_power,
+                                grepl("^MultivariableGLS$|GLS_Fisher_gamma|GLS_Cauchy|GLS_HMP|GSMR_Cauchy|GSMR_HMP|SMR_allSNPs_Cauchy|SMR_allSNPs_HMP|SMR_singleSNP_Cauchy|SMR_singleSNP_HMP", method) &
+                                    grepl("0; xQTLs from same sample", overlap) &
+                                    grepl("binary_use_all_in_xQTL", outcome) &
+                                    r2 == rtwo) %>%
+    mutate(method = fct_relevel(method, "MultivariableGLS", "GLS_Fisher_gamma", "GLS_Cauchy", "GSMR_Cauchy", "SMR_allSNPs_Cauchy", "SMR_singleSNP_Cauchy", "GLS_HMP", "GSMR_HMP",  "SMR_allSNPs_HMP", "SMR_singleSNP_HMP")) %>%
+    mutate(MR_method = recode(method, "MultivariableGLS"="GLS", "GLS_Fisher_gamma"="GLS", "GLS_Cauchy"="GLS", "GSMR_Cauchy"="GSMR", "SMR_allSNPs_Cauchy"="SMR_allSNPs", "SMR_singleSNP_Cauchy"="SMR_singleSNP", "GLS_HMP"="GLS", "GSMR_HMP"="GSMR",  "SMR_allSNPs_HMP"="SMR_allSNPs", "SMR_singleSNP_HMP"="SMR_singleSNP")) %>%
+    mutate(CombineModalities = recode(method, "MultivariableGLS"="Multivariable", "GLS_Fisher_gamma"="FisherGamma", "GLS_Cauchy"="Cauchy", "GSMR_Cauchy"="Cauchy", "SMR_allSNPs_Cauchy"="Cauchy", "SMR_singleSNP_Cauchy"="Cauchy", "GLS_HMP"="HMP", "GSMR_HMP"="HMP", "SMR_allSNPs_HMP"="HMP", "SMR_singleSNP_HMP"="HMP"))
+
+data_long_type_I_error_subset = subset(data_long_type_I_error,
+                                       grepl("^MultivariableGLS$|GLS_Fisher_gamma|GLS_Cauchy|GLS_HMP|GSMR_Cauchy|GSMR_HMP|SMR_allSNPs_Cauchy|SMR_allSNPs_HMP|SMR_singleSNP_Cauchy|SMR_singleSNP_HMP", method) &
+                                           grepl("0; xQTLs from same sample", overlap) &
+                                           grepl("binary_use_all_in_xQTL", outcome) &
+                                           r2 == rtwo) %>%
+    mutate(method = fct_relevel(method, "MultivariableGLS", "GLS_Fisher_gamma", "GLS_Cauchy", "GSMR_Cauchy", "SMR_allSNPs_Cauchy", "SMR_singleSNP_Cauchy", "GLS_HMP", "GSMR_HMP",  "SMR_allSNPs_HMP", "SMR_singleSNP_HMP")) %>% 
+    mutate(MR_method = recode(method, "MultivariableGLS"="GLS", "GLS_Fisher_gamma"="GLS", "GLS_Cauchy"="GLS", "GSMR_Cauchy"="GSMR", "SMR_allSNPs_Cauchy"="SMR_allSNPs", "SMR_singleSNP_Cauchy"="SMR_singleSNP", "GLS_HMP"="GLS", "GSMR_HMP"="GSMR",  "SMR_allSNPs_HMP"="SMR_allSNPs", "SMR_singleSNP_HMP"="SMR_singleSNP")) %>%
+    mutate(CombineModalities = recode(method, "MultivariableGLS"="Multivariable", "GLS_Fisher_gamma"="FisherGamma", "GLS_Cauchy"="Cauchy", "GSMR_Cauchy"="Cauchy", "SMR_allSNPs_Cauchy"="Cauchy", "SMR_singleSNP_Cauchy"="Cauchy", "GLS_HMP"="HMP", "GSMR_HMP"="HMP", "SMR_allSNPs_HMP"="HMP", "SMR_singleSNP_HMP"="HMP"))
+
+p = ggplot(data_long_power_subset,
+           aes(x=method, y=power, color=MR_method, shape=CombineModalities, size=as_factor(IV_strength))) +
+    geom_point() +
+    # geom_bar(position="dodge", stat="identity") +
+    facet_grid(rows = vars(pleiotropy), labeller = as_labeller(facet_labeller)) + 
+    geom_vline(xintercept=0.05, linetype="solid", color = "black", size = 0.2) +
+    # geom_rect(xmin=-Inf, xmax=Inf, ymin=-Inf, ymax=0, fill="grey80", color=NA, alpha=0.05) +
+    # geom_hline(yintercept=0, linetype="solid", color = "black") +
+    # geom_hline(yintercept=-0.05, linetype="dotted", color = "red") +
+    scale_colour_manual(values = c("IVW"="darkred", "GLS"="darkorange", "GSMR"="purple", "SMR_allSNPs"="darkblue", "SMR_singleSNP"="skyblue")) +
+    scale_shape_manual(values = c("Multivariable"=21, "FisherGamma"=22, "Cauchy"=24, "HMP"=25)) + 
+    scale_size_manual(values = c("0.5"=2, "1"=2.5, "2"=3)) +
+    theme_bw() +
+    # coord_flip() +
+    theme(#axis.line = element_line(colour = "black"),
+        #panel.grid.major = element_blank(),
+        #panel.grid.minor = element_blank(),
+        #panel.background = element_blank(),
+        plot.margin = margin(t = .35, r = .1, b = 0, l = .6, unit = "in"),
+        # legend.position = "none",
+        # legend.text=element_text(size=8),
+        axis.text.x = element_text(angle = 45, size = 8,
+                                   color = "black", face = "plain", vjust = 1, hjust = 1),
+        axis.text.y = element_text(size=8)) +
+    labs(size="IV Strength", shape="Combination Method", color="MR Method")
+# ggtitle(paste0(
+#  "Different p-value combination methods\n",
+#  "outcome type = binary_use_all_in_xQTL, r2 = ", rtwo, "\n",
+#  "overlap: 0; xQTLs from same sample"))
+pdf(file.path(real_data_dir, "figures/simulation_power_pval_combination_number_of_SNPs_5_beta_dist.pdf"), width=5.5, height=6)
+p %+% subset(data_long_power_subset, number_of_SNPs == 5)
+dev.off()
+pdf(file.path(real_data_dir, "figures/simulation_power_pval_combination_number_of_SNPs_20_beta_dist.pdf"), width=5.5, height=6)
+p %+% subset(data_long_power_subset, number_of_SNPs == 20) 
+dev.off()
+pdf(file.path(real_data_dir, "figures/simulation_type_I_error_pval_combination_number_of_SNPs_5_beta_dist.pdf"), width=3.9, height=6)
+(p + 
+        geom_hline(yintercept=0.05, color="red") + 
+        ylab("Type I error") +
+        ylim(0, 0.6) +
+        guides(color=FALSE, size=FALSE, shape=FALSE)) %+%
+    subset(data_long_type_I_error_subset, number_of_SNPs == 5)
+dev.off()
+pdf(file.path(real_data_dir, "figures/simulation_type_I_error_pval_combination_number_of_SNPs_20_beta_dist.pdf"), width=3.9, height=6)
+(p + 
+        geom_hline(yintercept=0.05, color="red") +
+        ylab("Type I error") +
+        ylim(0, 0.6) +
+        guides(color=FALSE, size=FALSE, shape=FALSE)) %+%
+    subset(data_long_type_I_error_subset, number_of_SNPs == 20)
+dev.off()
+```
+
 # Real data analysis
 
 Load the data files processed by ANDI and ROSMAP MR analysis.ipynb. The probes in the MHC region are removed: MHC region in hg19: MHC_chr = 6, MHC_start = 28477797, MHC_end = 33448354.

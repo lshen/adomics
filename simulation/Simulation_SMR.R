@@ -3,6 +3,7 @@ args = commandArgs(TRUE)
 ind = as.numeric(args)
 
 simulations = read.csv("simulation.csv", as.is=TRUE)
+# simulations = read.csv("simulation_beta_dist.csv", as.is=TRUE)  # varying SNP effect sizes
 simulation_setup = simulations[ind, ]
 
 outcome = simulation_setup$outcome
@@ -109,7 +110,7 @@ library(doRNG)
 library(hapsim)
 date()
 # 2. Generate x1, x2, x3, y, z1, z2 100 times with different ways to generate y
-times = 1000
+times = 10000
 set.seed(1234)
 stopifnot(overlap == 0 | xQTL_from_one_sample)
 method_names = c(
@@ -181,19 +182,36 @@ combined_array = foreach(i = 1:times, .combine = rbind) %dorng% {
   }
   
   z_matrix = simdata_hap1$data + simdata_hap2$data
-  z = rowSums(z_matrix)
-  z_first_half = rowSums(z_matrix[,1:(floor(p/2))])
-  z_second_half = rowSums(z_matrix[,(floor(p/2)+1):p])
-  
   u = rnorm(2*n_max)
-  
+
+  generate_SNP_effects = function(zmat) {
+    # zmat[] = zmat * (0.5 + rbeta(length(zmat), shape1 = 5, shape2 = 5))
+    zmat[] = zmat * (2 * rbeta(length(zmat), shape1 = 5, shape2 = 5))
+    rowSums(zmat)
+  }
+
+  z = generate_SNP_effects(z_matrix)
   if (pleiotropy == "horizontal") {
+    z_first_half = generate_SNP_effects(z_matrix[,1:(floor(p/2))])
+    z_second_half = generate_SNP_effects(z_matrix[,(floor(p/2)+1):p])
     x1 = 1 / p * IV_strength * z + u + rnorm(2*n_max) 
     x2 = - 1 / p * IV_strength * z_first_half - u + rnorm(2*n_max)
     x3 = 1 / p * IV_strength * z_second_half - u + rnorm(2*n_max)
     v = effect * (x1 + x2 + x3) + u
     odds = exp(-2 + v)
-    
+  # } else if (pleiotropy == "horizontal6") {
+  #   z2_first_half = generate_SNP_effects(z_matrix[,1:(floor(p/2))])
+  #   z3_second_half = generate_SNP_effects(z_matrix[,(floor(p/2)+1):p])
+  #   z5_first_half = generate_SNP_effects(z_matrix[,1:(floor(p/2))])
+  #   z6_second_half = generate_SNP_effects(z_matrix[,(floor(p/2)+1):p])
+  #   x1 = 1 / p * IV_strength * z + u + rnorm(2*n_max) 
+  #   x2 = - 1 / p * IV_strength * z2_first_half - u + rnorm(2*n_max)
+  #   x3 = 1 / p * IV_strength * z3_second_half - u + rnorm(2*n_max)
+  #   x4 = 1 / p * IV_strength * z + u + rnorm(2*n_max) 
+  #   x5 = - 1 / p * IV_strength * z5_first_half - u + rnorm(2*n_max)
+  #   x6 = 1 / p * IV_strength * z6_second_half - u + rnorm(2*n_max)
+  #   v = effect * (x1 + x2 + x3) + u
+  #   odds = exp(-2 + v)
   } else if (pleiotropy == "vertical") {
     x1 = 1 / p * IV_strength * z + rnorm(2*n_max) + u
     x2 = 2 * x1 - u + rnorm(2*n_max)
