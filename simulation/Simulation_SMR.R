@@ -184,16 +184,18 @@ combined_array = foreach(i = 1:times, .combine = rbind) %dorng% {
   z_matrix = simdata_hap1$data + simdata_hap2$data
   u = rnorm(2*n_max)
 
+  # SNP-exposure effect
   generate_SNP_effects = function(zmat) {
-    # zmat[] = zmat * (0.5 + rbeta(length(zmat), shape1 = 5, shape2 = 5))
-    zmat[] = zmat * (2 * rbeta(length(zmat), shape1 = 5, shape2 = 5))
+    # zmat[] = t(t(zmat) * (0.5 + rbeta(length(zmat), shape1 = 5, shape2 = 5)))
+    zmat[] = t(t(zmat) * (2 * rbeta(ncol(zmat), shape1 = 5, shape2 = 5)))
     rowSums(zmat)
   }
 
-  z = generate_SNP_effects(z_matrix)
+  # The columns of z_matrix are SNPs and the rows of z_matrix are samples
   if (pleiotropy == "horizontal") {
-    z_first_half = generate_SNP_effects(z_matrix[,1:(floor(p/2))])
-    z_second_half = generate_SNP_effects(z_matrix[,(floor(p/2)+1):p])
+    z = generate_SNP_effects(z_matrix)   # exposure x1
+    z_first_half = generate_SNP_effects(z_matrix[,1:(floor(p/2))])    # exposure x2
+    z_second_half = generate_SNP_effects(z_matrix[,(floor(p/2)+1):p]) # exposure x3
     x1 = 1 / p * IV_strength * z + u + rnorm(2*n_max) 
     x2 = - 1 / p * IV_strength * z_first_half - u + rnorm(2*n_max)
     x3 = 1 / p * IV_strength * z_second_half - u + rnorm(2*n_max)
@@ -213,6 +215,7 @@ combined_array = foreach(i = 1:times, .combine = rbind) %dorng% {
   #   v = effect * (x1 + x2 + x3) + u
   #   odds = exp(-2 + v)
   } else if (pleiotropy == "vertical") {
+    z = generate_SNP_effects(z_matrix)
     x1 = 1 / p * IV_strength * z + rnorm(2*n_max) + u
     x2 = 2 * x1 - u + rnorm(2*n_max)
     x3 = - x2 + u + rnorm(2*n_max)

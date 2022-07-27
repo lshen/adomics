@@ -10,7 +10,7 @@
 #'        A vector of length p (number of instrumental variables).
 #' @param r2     r^2 that is assumed to be known and the same between all instrumental variables
 get_p_values_from_summary = function(zx_est, zx_se, zy_est, zy_se, r2 = 0, bp = NULL, max_r2 = 0.2, min_dist_bp = 1e5,
-                                     include_coef_estimates = FALSE, include_number_of_SNPs = FALSE) {
+                                     include_coef_estimates = FALSE, include_number_of_SNPs = FALSE, need_ld_clump = TRUE) {
   m = nrow(zx_est)  # only m=3 has been implemented
   p = ncol(zx_est)
   
@@ -49,7 +49,7 @@ get_p_values_from_summary = function(zx_est, zx_se, zy_est, zy_se, r2 = 0, bp = 
   }
   
   SNPs = list()
-  if (is.null(bp)) {
+  if (is.null(bp) || !need_ld_clump) {
     SNPs$MVMR = SNPs[[3]] = SNPs[[2]] = SNPs[[1]] = seq_len(p)
   } else {
     # LD clumping separately for each modality
@@ -61,14 +61,18 @@ get_p_values_from_summary = function(zx_est, zx_se, zy_est, zy_se, r2 = 0, bp = 
   }
    
   # LD matrix, unsigned, not squared, see https://mrcieu.github.io/TwoSampleMR/reference/ld_matrix.html
-  if (is.data.frame(r2)) {
-    r2 = as.matrix(r2)
-    LDmat = sqrt(r2)
-  } else if (is.matrix(r2)) {
-    LDmat = sqrt(r2)
+  if (need_ld_clump) {
+    if (is.data.frame(r2)) {
+      r2 = as.matrix(r2)
+      LDmat = sqrt(r2)
+    } else if (is.matrix(r2)) {
+      LDmat = sqrt(r2)
+    } else {
+      LDmat = matrix(sqrt(r2), nrow=p, ncol=p)
+      diag(LDmat) = 1
+    }
   } else {
-    LDmat = matrix(sqrt(r2), nrow=p, ncol=p)
-    diag(LDmat) = 1
+    LDmat = r2
   }
   
   # Under a fixed model and a weighted regression analysis, the residual standard error should be 1.
@@ -102,8 +106,9 @@ get_p_values_from_summary = function(zx_est, zx_se, zy_est, zy_se, r2 = 0, bp = 
   # distribution = "t-dist" 
   
   # Multivariable. Make sure you have at least as many genetic instruments as exposures.
+  coef_multivariable = coef_multivariable_LD = rep(NA, m)
   if (length(SNPs$MVMR) <= m) {
-    Multivariable = MultivariableLD = Multivariable_tdist = MultivariableLD_tdist = NA
+    Multivariable = MultivariableLD = Multivariable_tdist = MultivariableLD_tdist = 1
   } else {
     # Most of the times the variants need to be uncorrelated when using summary data in multivariable MR
     # In the future we need to check the implementation in: https://github.com/qingyuanzhao/mr.raps/tree/multivariate
@@ -113,16 +118,22 @@ get_p_values_from_summary = function(zx_est, zx_se, zy_est, zy_se, r2 = 0, bp = 
     } else {
       stat_multivariable = summary_multivariable$fstatistic[1] * summary_multivariable$sigma^2
     }
+    coef_multivariable = coef(summary_multivariable)[,"Estimate"]
   
     # MultivariableLD
-    chol_LDmat_MVMR = chol(LDmat[SNPs$MVMR,SNPs$MVMR])
-    zy_est_LD = backsolve(chol_LDmat_MVMR, zy_est[SNPs$MVMR] / zy_se[SNPs$MVMR], transpose = TRUE)
-    zx_est_LD = t(backsolve(chol_LDmat_MVMR, t(zx_est)[SNPs$MVMR, ] / zy_se[SNPs$MVMR], transpose = TRUE))
-    summary_multivariable_LD = summary(lm(zy_est_LD~0+t(zx_est_LD)))
-    if (allow_overdispersion(length(SNPs$MVMR))) {
-      stat_multivariable_LD = summary_multivariable_LD$fstatistic[1] * min(1, summary_multivariable_LD$sigma^2)
-    } else {
-      stat_multivariable_LD = summary_multivariable_LD$fstatistic[1] * summary_multivariable_LD$sigma^2
+    stat_multivariable_LD = tryCatch({
+      chol_LDmat_MVMR = chol(LDmat[SNPs$MVMR,SNPs$MVMR])
+      zy_est_LD = backsolve(chol_LDmat_MVMR, zy_est[SNPs$MVMR] / zy_se[SNPs$MVMR], transpose = TRUE)
+      zx_est_LD = t(backsolve(chol_LDmat_MVMR, t(zx_est)[SNPs$MVMR, ] / zy_se[SNPs$MVMR], transpose = TRUE))
+      summary_multivariable_LD = summary(lm(zy_est_LD~0+t(zx_est_LD)))
+      if (allow_overdispersion(length(SNPs$MVMR))) {
+        summary_multivariable_LD$fstatistic[1] * min(1, summary_multivariable_LD$sigma^2)
+      } else {
+        summary_multivariable_LD$fstatistic[1] * summary_multivariable_LD$sigma^2
+      }
+    }, error = function(e) {NA})
+    if (!is.na(stat_multivariable_LD)) {
+      coef_multivariable_LD = coef(summary_multivariable_LD)[,"Estimate"]
     }
     
     # if (distribution == "normal") {
@@ -135,10 +146,11 @@ get_p_values_from_summary = function(zx_est, zx_se, zy_est, zy_se, r2 = 0, bp = 
 
   # IVW
   summary_x = beta_x = se_x = list()
-  pval_x = pval_tdist_x = c()
+  pval_x = pval_tdist_x = coef_IVW = rep(NA, m)
   for (k in seq_len(m)) {
     if (length(SNPs[[k]]) < 2) {
       pval_x[k] = pval_tdist_x[k] = 1
+      coef_IVW[k] = NA
       next
     }
     summary_x[[k]] = summary(lm(zy_est[SNPs[[k]]]~0+zx_est[k,SNPs[[k]]], weights = 1/as.numeric(zy_se[SNPs[[k]]]^2)))
@@ -152,6 +164,7 @@ get_p_values_from_summary = function(zx_est, zx_se, zy_est, zy_se, r2 = 0, bp = 
     pval_x[k] = 2*pnorm(abs(beta_x[[k]]/se_x[[k]]), lower.tail=FALSE)
     # } else {
     pval_tdist_x[k] = 2*pt(abs(beta_x[[k]]/se_x[[k]]), length(SNPs[[k]])-1, lower.tail=FALSE)
+    coef_IVW[k] = coef(summary_x[[k]])[,"Estimate"]
   }
   stat_Fisher = -2 * sum(log(pval_x))
   stat_Cauchy = mean(ifelse(pval_x < 1e-15, 1/pval_x/pi, tan((0.5 - pval_x) * pi)))
@@ -183,7 +196,7 @@ get_p_values_from_summary = function(zx_est, zx_se, zy_est, zy_se, r2 = 0, bp = 
   IVW_Modality1 = pval_x[1]
   IVW_Modality2 = pval_x[2]
   IVW_Modality3 = pval_x[3]
-  IVW_HMP =  harmonicmeanp::p.hmp(pval_x, L = m)
+  IVW_HMP =  harmonicmeanp::p.hmp(pval_x + .Machine$double.xmin, L = m)
   IVW_Cauchy_cauchy = pcauchy(stat_Cauchy, lower.tail = FALSE) # 0.5 - atan(stat_Cauchy)/pi
   
   IVW_tdist_MinP = stat_tdist_MinP
@@ -192,34 +205,46 @@ get_p_values_from_summary = function(zx_est, zx_se, zy_est, zy_se, r2 = 0, bp = 
   IVW_tdist_Modality1 = pval_tdist_x[1]
   IVW_tdist_Modality2 = pval_tdist_x[2]
   IVW_tdist_Modality3 = pval_tdist_x[3]
-  IVW_tdist_HMP =  ifelse(!is.finite(stat_tdist_Fisher[1]), NA, harmonicmeanp::p.hmp(pval_tdist_x, L = m))
+  IVW_tdist_HMP =  ifelse(!is.finite(stat_tdist_Fisher[1]), NA, harmonicmeanp::p.hmp(pval_tdist_x + .Machine$double.xmin, L = m))
   IVW_tdist_Cauchy_cauchy = pcauchy(stat_tdist_Cauchy, lower.tail = FALSE) # 0.5 - atan(stat_tdist_Cauchy)/pi
   
   # WGLR
   # when a LD matrix is provided, account for correlation between SNPs:
   summary_x_LD = beta_x_LD = se_x_LD = list()
-  pval_x_LD = pval_tdist_x_LD = c()
+  pval_x_LD = pval_tdist_x_LD = coef_WGLR = rep(NA, m)
   chol_LDmat_list = list()
-  for (k in seq_len(m)) {
-    if (length(SNPs[[k]]) < 2) {
-      pval_x_LD[k] = pval_tdist_x_LD[k] = 1
-      chol_LDmat_list[[k]] = matrix(1, nrow=1, ncol=1)
-      next
+  pval_LDs = tryCatch({
+    for (k in seq_len(m)) {
+      if (length(SNPs[[k]]) < 2) {
+        pval_x_LD[k] = pval_tdist_x_LD[k] = 1
+        chol_LDmat_list[[k]] = matrix(1, nrow=1, ncol=1)
+        coef_WGLR[k] = NA
+        next
+      }
+      chol_LDmat_list[[k]] = chol(LDmat[SNPs[[k]],SNPs[[k]]])
+      zy_est_LD_k = backsolve(chol_LDmat_list[[k]], zy_est[SNPs[[k]]] / zy_se[SNPs[[k]]], transpose = TRUE)
+      zx_est_LD_k = backsolve(chol_LDmat_list[[k]], t(zx_est)[SNPs[[k]], k] / zy_se[SNPs[[k]]], transpose = TRUE)
+      summary_x_LD[[k]] = summary(lm(zy_est_LD_k~0+zx_est_LD_k))
+      beta_x_LD[[k]] = summary_x_LD[[k]]$coef[1,1]
+      if (allow_overdispersion(length(SNPs[[k]]))) {
+        se_x_LD[[k]]   = summary_x_LD[[k]]$coef[1,2] / min(1, summary_x_LD[[k]]$sigma)
+      } else {
+        se_x_LD[[k]]   = summary_x_LD[[k]]$coef[1,2] / summary_x_LD[[k]]$sigma
+      }
+      coef_WGLR[k] = coef(summary_x_LD[[k]])[,"Estimate"]
+      
+      # if (distribution == "normal") {
+      pval_x_LD[k] = 2*pnorm(abs(beta_x_LD[[k]]/se_x_LD[[k]]), lower.tail=FALSE)
+      # } else {
+      pval_tdist_x_LD[k] = 2*pt(abs(beta_x_LD[[k]]/se_x_LD[[k]]), length(SNPs[[k]])-1, lower.tail=FALSE)
     }
-    chol_LDmat_list[[k]] = chol(LDmat[SNPs[[k]],SNPs[[k]]])
-    zy_est_LD_k = backsolve(chol_LDmat_list[[k]], zy_est[SNPs[[k]]] / zy_se[SNPs[[k]]], transpose = TRUE)
-    zx_est_LD_k = backsolve(chol_LDmat_list[[k]], t(zx_est)[SNPs[[k]], k] / zy_se[SNPs[[k]]], transpose = TRUE)
-    summary_x_LD[[k]] = summary(lm(zy_est_LD_k~0+zx_est_LD_k))
-    beta_x_LD[[k]] = summary_x_LD[[k]]$coef[1,1]
-    if (allow_overdispersion(length(SNPs[[k]]))) {
-      se_x_LD[[k]]   = summary_x_LD[[k]]$coef[1,2] / min(1, summary_x_LD[[k]]$sigma)
-    } else {
-      se_x_LD[[k]]   = summary_x_LD[[k]]$coef[1,2] / summary_x_LD[[k]]$sigma
-    }
-    # if (distribution == "normal") {
-    pval_x_LD[k] = 2*pnorm(abs(beta_x_LD[[k]]/se_x_LD[[k]]), lower.tail=FALSE)
-    # } else {
-    pval_tdist_x_LD[k] = 2*pt(abs(beta_x_LD[[k]]/se_x_LD[[k]]), length(SNPs[[k]])-1, lower.tail=FALSE)
+    c(pval_x_LD, pval_tdist_x_LD)
+  }, error = function(e) {NA})
+  if (is.na(pval_LDs[1])) {
+    pval_x_LD = pval_tdist_x_LD = NA
+  } else {
+    pval_x_LD = pval_LDs[seq_len(m)]
+    pval_tdist_x_LD = pval_LDs[m + seq_len(m)]
   }
   stat_Fisher_LD = -2 * sum(log(pval_x_LD))
   stat_Cauchy_LD = mean(ifelse(pval_x_LD < 1e-15, 1/pval_x_LD/pi, tan((0.5 - pval_x_LD) * pi)))
@@ -229,47 +254,60 @@ get_p_values_from_summary = function(zx_est, zx_se, zy_est, zy_se, r2 = 0, bp = 
   stat_tdist_MinP_LD = min(pval_tdist_x_LD)
   
   # WGLR
-  WGLR_Cauchy_cauchy = pcauchy(stat_Cauchy_LD, lower.tail = FALSE) # 0.5 - atan(stat_Cauchy_LD)/pi
-  WGLR_MinP = stat_MinP_LD
-  WGLR_Fisher_chisq = pchisq(stat_Fisher_LD, df = 2*m, lower.tail = FALSE)
-  # Fisher combination function: considers the correlation between modalities
-  mu = 2*m
-  rho = rep(NA, m)
-  # cosine similarity matrix; see https://stats.stackexchange.com/q/367216
-  beta_x_matrix = matrix(t(zx_est) / zy_se, ncol = m)
-  beta_x_list = beta_1_list = list()
-  for (k in seq_len(m)) {
-    beta_x_list[[k]] = backsolve(chol_LDmat_list[[k]], beta_x_matrix[SNPs[[k]], k], transpose = TRUE)
-    beta_1_list[[k]] = backsolve(chol_LDmat_list[[k]], diag(1, length(SNPs[[k]])), transpose = TRUE)
-  }
-  
-  sim = matrix(nrow = m, ncol = m)
-  for (j in seq_len(m)) {
-    for (i in seq_len(j-1)) {
-      sim[i, j] =  ((t(beta_x_list[[i]]) %*% beta_1_list[[i]]) / as.numeric(sqrt(t(beta_x_list[[i]]) %*% beta_x_list[[i]]))) %*%
-                  LDmat[SNPs[[i]], SNPs[[j]]] %*% 
-                  t((t(beta_x_list[[j]]) %*% beta_1_list[[j]]) / as.numeric(sqrt(t(beta_x_list[[j]]) %*% beta_x_list[[j]])))
+  if (is.na(pval_LDs[1])) {
+    WGLR_Cauchy_cauchy = WGLR_tdist_Cauchy_cauchy =
+      WGLR_HMP = WGLR_tdist_HMP =
+      WGLR_Modality1 = WGLR_tdist_Modality1 =
+      WGLR_Modality2 = WGLR_tdist_Modality2 =
+      WGLR_Modality3 = WGLR_tdist_Modality3 =
+      WGLR_MinP = WGLR_tdist_MinP =
+      WGLR_Fisher_chisq = WGLR_tdist_Fisher_chisq =
+      WGLR_Fisher_gamma = WGLR_tdist_Fisher_gamma =
+      GSMR_Cauchy_cauchy = GSMR_HMP = 
+      GSMR_Modality1 = GSMR_Modality3 = GSMR_Modality3 = NA
+  } else {
+    WGLR_Cauchy_cauchy = pcauchy(stat_Cauchy_LD, lower.tail = FALSE) # 0.5 - atan(stat_Cauchy_LD)/pi
+    WGLR_MinP = stat_MinP_LD
+    WGLR_Fisher_chisq = pchisq(stat_Fisher_LD, df = 2*m, lower.tail = FALSE)
+    # Fisher combination function: considers the correlation between modalities
+    mu = 2*m
+    rho = rep(NA, m)
+    # cosine similarity matrix; see https://stats.stackexchange.com/q/367216
+    beta_x_matrix = matrix(t(zx_est) / zy_se, ncol = m)
+    beta_x_list = beta_1_list = list()
+    for (k in seq_len(m)) {
+      beta_x_list[[k]] = backsolve(chol_LDmat_list[[k]], beta_x_matrix[SNPs[[k]], k], transpose = TRUE)
+      beta_1_list[[k]] = backsolve(chol_LDmat_list[[k]], diag(1, length(SNPs[[k]])), transpose = TRUE)
     }
+    
+    sim = matrix(nrow = m, ncol = m)
+    for (j in seq_len(m)) {
+      for (i in seq_len(j-1)) {
+        sim[i, j] =  ((t(beta_x_list[[i]]) %*% beta_1_list[[i]]) / as.numeric(sqrt(t(beta_x_list[[i]]) %*% beta_x_list[[i]]))) %*%
+                    LDmat[SNPs[[i]], SNPs[[j]]] %*% 
+                    t((t(beta_x_list[[j]]) %*% beta_1_list[[j]]) / as.numeric(sqrt(t(beta_x_list[[j]]) %*% beta_x_list[[j]])))
+      }
+    }
+    rho = sim[upper.tri(sim)]
+    r = rho #* (1 + (1-rho^2)/(2*(n-3)))
+    delta = 3.9081*r^2 + 0.0313*r^4 + 0.1022*r^6 - 0.1378*r^8 + 0.0941*r^10 #- 3.9081/n*(1-r^2)^2
+    sigma2 = 4*m + 2*sum(delta)
+    WGLR_Fisher_gamma = pgamma(stat_Fisher_LD, shape=mu^2/sigma2, scale=sigma2/mu, lower.tail=FALSE)
+    WGLR_Modality1 = pval_x_LD[1]
+    WGLR_Modality2 = pval_x_LD[2]
+    WGLR_Modality3 = pval_x_LD[3]
+    WGLR_HMP = ifelse(!is.finite(stat_Fisher_LD[1]), NA, harmonicmeanp::p.hmp(pval_x_LD + .Machine$double.xmin, L = m))
+    
+    WGLR_tdist_Cauchy_cauchy = pcauchy(stat_tdist_Cauchy_LD, lower.tail = FALSE) # 0.5 - atan(stat_tdist_Cauchy_LD)/pi
+    WGLR_tdist_MinP = stat_tdist_MinP_LD
+    WGLR_tdist_Fisher_chisq = pchisq(stat_tdist_Fisher_LD, df = 2*m, lower.tail = FALSE)
+    WGLR_tdist_Fisher_gamma = pgamma(stat_tdist_Fisher_LD, shape=mu^2/sigma2, scale=sigma2/mu, lower.tail=FALSE)
+    WGLR_tdist_Modality1 = pval_tdist_x_LD[1]
+    WGLR_tdist_Modality2 = pval_tdist_x_LD[2]
+    WGLR_tdist_Modality3 = pval_tdist_x_LD[3]
+    WGLR_tdist_HMP = ifelse(!is.finite(stat_tdist_Fisher_LD[1]), NA, harmonicmeanp::p.hmp(pval_tdist_x_LD + .Machine$double.xmin, L = m))
   }
-  rho = sim[upper.tri(sim)]
-  r = rho #* (1 + (1-rho^2)/(2*(n-3)))
-  delta = 3.9081*r^2 + 0.0313*r^4 + 0.1022*r^6 - 0.1378*r^8 + 0.0941*r^10 #- 3.9081/n*(1-r^2)^2
-  sigma2 = 4*m + 2*sum(delta)
-  WGLR_Fisher_gamma = pgamma(stat_Fisher_LD, shape=mu^2/sigma2, scale=sigma2/mu, lower.tail=FALSE)
-  WGLR_Modality1 = pval_x_LD[1]
-  WGLR_Modality2 = pval_x_LD[2]
-  WGLR_Modality3 = pval_x_LD[3]
-  WGLR_HMP = ifelse(!is.finite(stat_Fisher_LD[1]), NA, harmonicmeanp::p.hmp(pval_x_LD, L = m))
   
-  WGLR_tdist_Cauchy_cauchy = pcauchy(stat_tdist_Cauchy_LD, lower.tail = FALSE) # 0.5 - atan(stat_tdist_Cauchy_LD)/pi
-  WGLR_tdist_MinP = stat_tdist_MinP_LD
-  WGLR_tdist_Fisher_chisq = pchisq(stat_tdist_Fisher_LD, df = 2*m, lower.tail = FALSE)
-  WGLR_tdist_Fisher_gamma = pgamma(stat_tdist_Fisher_LD, shape=mu^2/sigma2, scale=sigma2/mu, lower.tail=FALSE)
-  WGLR_tdist_Modality1 = pval_tdist_x_LD[1]
-  WGLR_tdist_Modality2 = pval_tdist_x_LD[2]
-  WGLR_tdist_Modality3 = pval_tdist_x_LD[3]
-  WGLR_tdist_HMP = ifelse(!is.finite(stat_tdist_Fisher_LD[1]), NA, harmonicmeanp::p.hmp(pval_tdist_x_LD, L = m))
-
   # GSMR
   # The GSMR method involve inverting a covariance matrix,
   # which tends to give numerical problems when the IV is not strong enough.
@@ -314,7 +352,7 @@ get_p_values_from_summary = function(zx_est, zx_se, zy_est, zy_se, r2 = 0, bp = 
   stat_GSMR_Cauchy = mean(ifelse(pval_GSMR < 1e-15, 1/pval_GSMR/pi, tan((0.5 - pval_GSMR) * pi)))
   GSMR_Cauchy_cauchy = pcauchy(stat_GSMR_Cauchy, lower.tail = FALSE) # 0.5 - atan(stat_GSMR_Cauchy)/pi
   
-  GSMR_HMP = ifelse(!is.finite(stat_GSMR[1]), NA, harmonicmeanp::p.hmp(pval_GSMR, L = m))
+  GSMR_HMP = ifelse(!is.finite(stat_GSMR[1]), NA, harmonicmeanp::p.hmp(pval_GSMR + .Machine$double.xmin, L = m))
   
   GSMR_Modality1 = pval_GSMR[1]
   GSMR_Modality2 = pval_GSMR[2]
@@ -340,7 +378,7 @@ get_p_values_from_summary = function(zx_est, zx_se, zy_est, zy_se, r2 = 0, bp = 
   SMR_allSNPs_Cauchy_cauchy = pcauchy(stat_SMR_Cauchy, lower.tail = FALSE) # 0.5 - atan(stat_SMR_Cauchy)/pi
   stat_SMR_MinP = min(pval_SMR)
   SMR_allSNPs_MinP = stat_SMR_MinP
-  SMR_allSNPs_HMP = ifelse(!is.finite(SMR_statistics[1]), NA, harmonicmeanp::p.hmp(pval_SMR, L = m * p))
+  SMR_allSNPs_HMP = ifelse(!is.finite(SMR_statistics[1]), NA, harmonicmeanp::p.hmp(pval_SMR + .Machine$double.xmin, L = m * p))
   
   # single SNP
   # GWAS_multipleSNPs = pnorm(zy_est / zy_se) * 2
@@ -372,7 +410,7 @@ get_p_values_from_summary = function(zx_est, zx_se, zy_est, zy_se, r2 = 0, bp = 
   stat_topSNP_Cauchy = mean(ifelse(pval_topSNP < 1e-15, 1/pval_topSNP/pi, tan((0.5 - pval_topSNP) * pi)))
   SMR_singleSNP_Cauchy_cauchy =  pcauchy(stat_topSNP_Cauchy, lower.tail = FALSE) # 0.5 - atan(stat_topSNP_Cauchy)/pi
   
-  SMR_singleSNP_HMP = ifelse(!is.finite(statistics_SMR_topSNP[1]), NA, harmonicmeanp::p.hmp(pval_topSNP, L = m))
+  SMR_singleSNP_HMP = ifelse(!is.finite(statistics_SMR_topSNP[1]), NA, harmonicmeanp::p.hmp(pval_topSNP + .Machine$double.xmin, L = m))
   
   SMR_Modality1 = pval_topSNP[1]
   SMR_Modality2 = pval_topSNP[2]
@@ -390,7 +428,7 @@ get_p_values_from_summary = function(zx_est, zx_se, zy_est, zy_se, r2 = 0, bp = 
     IVW_MinP, IVW_tdist_MinP,
     IVW_Fisher_chisq, IVW_tdist_Fisher_chisq, 
     # IVW_Fisher_gamma, IVW_tdist_Fisher_gamma, 
-    WGLR_Cauchy_cauchy,WGLR_tdist_Cauchy_cauchy,
+    WGLR_Cauchy_cauchy, WGLR_tdist_Cauchy_cauchy,
     WGLR_HMP, WGLR_tdist_HMP,
     WGLR_Modality1, WGLR_tdist_Modality1,
     WGLR_Modality2, WGLR_tdist_Modality2,
@@ -440,14 +478,14 @@ get_p_values_from_summary = function(zx_est, zx_se, zy_est, zy_se, r2 = 0, bp = 
     )
   
   if (include_coef_estimates) {
-    coef_estimates = c(coef(summary_multivariable)[,"Estimate"],
-                       coef(summary_multivariable_LD)[,"Estimate"],
-                       coef(summary_x[[1]])[,"Estimate"],
-                       coef(summary_x[[2]])[,"Estimate"],
-                       coef(summary_x[[3]])[,"Estimate"],
-                       coef(summary_x_LD[[1]])[,"Estimate"],
-                       coef(summary_x_LD[[2]])[,"Estimate"],
-                       coef(summary_x_LD[[3]])[,"Estimate"])
+    coef_estimates = c(coef_multivariable,
+                       coef_multivariable_LD,
+                       coef_IVW,
+                       coef_WGLR)
+    if (length(coef_estimates) != 12) {
+      write.csv(data.frame(coefs=coef_estimates), "coef_estimate_error.out")
+      coef_estimates = rep(NA, 12)
+    }
     names(coef_estimates) = c("Multivariable_beta1",
                               "Multivariable_beta2",
                               "Multivariable_beta3",

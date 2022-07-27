@@ -1,0 +1,13 @@
+outcome,pleiotropy,IV_strength,effect,overlap,r2,number_of_SNPs,xQTL_from_one_sample
+continuous,horizontal,0.5,0.1,0,NA,NA,TRUE
+continuous,vertical,0.5,0.1,0,NA,NA,TRUE
+continuous,horizontal,1,0.1,0,NA,NA,TRUE
+continuous,vertical,1,0.1,0,NA,NA,TRUE
+continuous,horizontal,2,0.1,0,NA,NA,TRUE
+continuous,vertical,2,0.1,0,NA,NA,TRUE
+continuous,horizontal,0.5,0,0,NA,NA,TRUE
+continuous,vertical,0.5,0,0,NA,NA,TRUE
+continuous,horizontal,1,0,0,NA,NA,TRUE
+continuous,vertical,1,0,0,NA,NA,TRUE
+continuous,horizontal,2,0,0,NA,NA,TRUE
+continuous,vertical,2,0,0,NA,NA,TRUE
