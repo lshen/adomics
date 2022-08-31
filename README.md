@@ -1,6 +1,6 @@
 # adomics
 
-ANDI and ROSMAP MR analysis.ipynb: Python notebook code for processing the GWAS and QTLs. Requires the additional dataset files not provided in the Github repository to run.
+ADNI and ROSMAP MR analysis.ipynb: Python notebook code for processing the GWAS and QTLs. Requires the additional dataset files not provided in the Github repository to run.
 
 reproducible_figures_summary_MR.Rmd: R markdown code that generates the figures in the paper.
 
